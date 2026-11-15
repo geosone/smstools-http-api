@@ -47,7 +47,9 @@ class ProductionConfig(Config):
 
         import logging
 
-        # stderr -> journald under systemd
+        # stderr -> journald under systemd (replaces Flask's own handler: no double lines)
+        from flask.logging import default_handler
+        app.logger.removeHandler(default_handler)
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
         app.logger.setLevel(logging.INFO)
