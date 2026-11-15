@@ -3,7 +3,7 @@
 
 import os
 
-from app import create_app
+from smstools_http_api import create_app
 
 app = create_app(os.getenv('FLASK_CONFIG') or 'production')
 

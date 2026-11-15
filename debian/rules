@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME=smstools-http-api
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+# test.py writes into tmp/ below the source tree
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	python3 test.py
+	rm -rf tmp
+endif

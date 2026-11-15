@@ -1,0 +1,4 @@
+# Address and port the API listens on. Basic auth travels in clear text:
+# listen on a trusted network only, or behind a TLS reverse proxy.
+#SMSTOOLS_HTTP_API_BIND=127.0.0.1:5000
+#SMSTOOLS_HTTP_API_WORKERS=2

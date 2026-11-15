@@ -1,0 +1,8 @@
+.git
+tmp
+dist
+build
+*.egg-info
+__pycache__
+venv
+debian

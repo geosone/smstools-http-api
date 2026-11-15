@@ -1,0 +1,32 @@
+Source: smstools-http-api
+Section: comm
+Priority: optional
+Maintainer: Mario Fetka <mario.fetka@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-setuptools,
+               python3-flask,
+               python3-flask-httpauth,
+               python3-passlib
+Standards-Version: 4.6.2
+Homepage: https://github.com/geosone/smstools-http-api
+Vcs-Git: https://github.com/geosone/smstools-http-api.git
+Rules-Requires-Root: no
+
+Package: smstools-http-api
+Architecture: all
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3-flask,
+         python3-flask-httpauth,
+         python3-passlib,
+         python3-gunicorn,
+         smstools
+Recommends: apache2-utils
+Description: REST HTTP API for SMS Server Tools 3
+ Sends and reads SMS through the spool directories of smsd (SMS Server
+ Tools 3) over a small JSON REST API with HTTP basic authentication.
+ .
+ A DEMO mode accepts and logs messages without handing them to smsd.

@@ -2,7 +2,9 @@
 
 from flask import Flask
 
-from config import config
+__version__ = '2.0.0'
+
+from .config import config
 
 
 def create_app(config_name):

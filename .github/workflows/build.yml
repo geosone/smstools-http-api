@@ -1,0 +1,146 @@
+# Tests, then builds:
+# - Debian packages for the last two Debian and Ubuntu LTS releases
+# - Python wheel + sdist (pip/pipx install)
+# - container image on ghcr.io (pushed from master and tags)
+# A tag v* creates a GitHub release with the packages and the wheel attached.
+
+name: build
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install '.[server]'
+      - run: python test.py
+      - run: smstools-http-api --version
+
+  deb:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:bookworm
+            suffix: deb12
+          - image: debian:trixie
+            suffix: deb13
+          - image: ubuntu:24.04
+            suffix: ubuntu24.04
+          - image: ubuntu:26.04
+            suffix: ubuntu26.04
+    container: ${{ matrix.image }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      DEBEMAIL: mario.fetka@gmail.com
+      DEBFULLNAME: Mario Fetka
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends git ca-certificates build-essential devscripts
+      - uses: actions/checkout@v4
+      - name: Build dependencies
+        run: apt-get build-dep -y -q --no-install-recommends ./
+      - name: Version for this release
+        run: |
+          base=$(dpkg-parsechangelog -S Version)
+          case "$GITHUB_REF" in
+            refs/tags/v*) v="$base+${{ matrix.suffix }}" ;;
+            *) v="$base+git$(date -u +%Y%m%d).$(git -c safe.directory='*' rev-parse --short HEAD)+${{ matrix.suffix }}" ;;
+          esac
+          . /etc/os-release
+          dch --newversion "$v" --distribution "$VERSION_CODENAME" --force-distribution \
+              "Build for $PRETTY_NAME."
+      - name: Build
+        run: |
+          dpkg-buildpackage -b -us -uc
+          mkdir -p out && mv ../*.deb out/
+      - name: Install and start check
+        run: |
+          apt-get install -y -q ./out/*.deb
+          smstools-http-api --version
+          ls -l /etc/smstools-http-api
+          su -s /bin/sh smsd -c 'SMSTOOLS_HTTP_API_SETTINGS=/etc/smstools-http-api/settings.py smstools-http-api --bind 127.0.0.1:5000' &
+          sleep 3
+          python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5000/api/v1.0/monitoring').read().decode())"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.suffix }}
+          path: out/*.deb
+
+  python:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [deb, python, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

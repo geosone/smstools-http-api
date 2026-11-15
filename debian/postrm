@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = purge ]; then
+    rm -rf /etc/smstools-http-api
+fi
+
+#DEBHELPER#
+
+exit 0

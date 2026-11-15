@@ -1,0 +1,22 @@
+[Unit]
+Description=REST HTTP API for SMS Server Tools 3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smsd
+Group=smsd
+UMask=0007
+Environment=SMSTOOLS_HTTP_API_SETTINGS=/etc/smstools-http-api/settings.py
+Environment=SMSTOOLS_HTTP_API_BIND=127.0.0.1:5000
+EnvironmentFile=-/etc/default/smstools-http-api
+ExecStart=/usr/bin/smstools-http-api
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/spool/sms
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

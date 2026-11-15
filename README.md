@@ -9,7 +9,9 @@ updated for Python 3 and current Flask (2.2+/3.x), Flask-HTTPAuth 4 and gunicorn
 
 Changes against upstream:
 
-- Python 3 only, `flask_script` (unmaintained) replaced by `wsgi.py` for gunicorn/`flask run`
+- Python 3 only, packaged as `smstools_http_api` with a `smstools-http-api` command;
+  `flask_script` (unmaintained) dropped, `wsgi.py` for other WSGI servers
+- Debian/Ubuntu packages, wheel and container image built by GitHub Actions
 - runs with the Debian packages (trixie: `python3-flask python3-flask-httpauth python3-passlib gunicorn`)
 - site settings in a separate file (`SMSTOOLS_HTTP_API_SETTINGS`), see `contrib/settings.py.example`
 - `DEMO` mode: messages are accepted, logged and stored in the `sent` spool with `Demo: yes`
@@ -17,29 +19,54 @@ Changes against upstream:
 - fixed: listing messages recursed endlessly, message IDs could escape the spool directory
   (`../`), JSON errors keys (`"status: "` -> `"status"`), headers with `:` in the value,
   wrong Content-Type gave 415 instead of 400; `POST/GET /sms/outgoing` answers 201 as documented
-- systemd unit in `contrib/`
 
 Installation
 ------------
 
-Debian/Ubuntu with SMS Server Tools 3:
+The API reads and writes the spool directories of smsd, so it runs on the host (or in a
+container next to the one) where SMS Server Tools 3 runs.
 
-    # apt install smstools python3-flask python3-flask-httpauth python3-passlib gunicorn apache2-utils
-    # git clone https://github.com/geosone/smstools-http-api.git /opt/smstools-http-api
-    # install -d -m 750 -g smsd /etc/smstools-http-api
-    # install -m 640 -g smsd /opt/smstools-http-api/contrib/settings.py.example /etc/smstools-http-api/settings.py
-    # htpasswd -c -B /etc/smstools-http-api/htpasswd.users myuser
-    # chgrp smsd /etc/smstools-http-api/htpasswd.users; chmod 640 /etc/smstools-http-api/htpasswd.users
-    # cp /opt/smstools-http-api/contrib/smstools-http-api.service /etc/systemd/system/
-    # systemctl enable --now smstools-http-api
+### Debian / Ubuntu package
 
-The unit runs as `smsd`, so new spool files belong to smsd. Put a TLS reverse proxy in
-front of it, or bind it to a trusted network only (basic auth is sent in clear text).
+Packages for Debian 12/13 and Ubuntu 24.04/26.04 are attached to the
+[releases](https://github.com/geosone/smstools-http-api/releases) (builds of every
+commit are in the [Actions](https://github.com/geosone/smstools-http-api/actions) artifacts):
 
-Development:
+    # apt install ./smstools-http-api_*.deb
+    # htpasswd -B /etc/smstools-http-api/htpasswd.users myuser
+    # editor /etc/smstools-http-api/settings.py /etc/default/smstools-http-api
+    # systemctl restart smstools-http-api
 
-    $ python3 -m venv venv && . venv/bin/activate && pip install -r requirements.txt
-    $ FLASK_CONFIG=development flask --app wsgi run
+It depends on `smstools` and runs as `smsd`, listening on `127.0.0.1:5000`
+(`SMSTOOLS_HTTP_API_BIND` in `/etc/default/smstools-http-api`).
+
+### pip / pipx
+
+    $ pipx install 'smstools-http-api[server] @ git+https://github.com/geosone/smstools-http-api'
+    $ smstools-http-api --bind 0.0.0.0:5000 --settings /etc/smstools-http-api/settings.py
+
+or the wheel from a release: `pip install 'smstools_http_api-*.whl[server]'`.
+`contrib/smstools-http-api.service` is a systemd unit for a checkout in
+`/opt/smstools-http-api` served by gunicorn (`wsgi:app`).
+
+### Container
+
+    # docker run -d -p 5000:5000 --user "$(id -u smsd):$(id -g smsd)" \
+        -v /var/spool/sms:/var/spool/sms \
+        -v /etc/smstools-http-api:/etc/smstools-http-api:ro \
+        ghcr.io/geosone/smstools-http-api
+
+### Configuration
+
+Settings go to `/etc/smstools-http-api/settings.py` (see `contrib/settings.py.example`):
+`DEMO`, `HTPASSWD_PATH`, `ADMIN_ACCOUNTS`, `DEFAULTQUEUE`, `USER_WHITELIST`. Users are
+in an htpasswd file (`htpasswd -B`). Basic auth travels in clear text: listen on a
+trusted network only, or behind a TLS reverse proxy.
+
+### Development
+
+    $ python3 -m venv venv && . venv/bin/activate && pip install -e '.[server]'
+    $ smstools-http-api --dev -c development
     $ python3 test.py
 
 API Documentation

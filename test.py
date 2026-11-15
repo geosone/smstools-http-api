@@ -8,7 +8,7 @@ import unittest
 
 from passlib.apache import HtpasswdFile
 
-from app import create_app
+from smstools_http_api import create_app
 
 BASE = 'tmp/test'
 AUTH = {'Authorization': 'Basic ' + base64.b64encode(b'test:test').decode()}

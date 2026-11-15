@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    dir=/etc/smstools-http-api
+    install -d -m 750 -o root -g smsd "$dir"
+    if [ ! -e "$dir/settings.py" ]; then
+        install -m 640 -o root -g smsd /usr/share/smstools-http-api/settings.py.example "$dir/settings.py"
+    fi
+    if [ ! -e "$dir/htpasswd.users" ]; then
+        install -m 640 -o root -g smsd /dev/null "$dir/htpasswd.users"
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0
