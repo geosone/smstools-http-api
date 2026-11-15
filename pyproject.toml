@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Leonid Vasiliev"}]
 maintainers = [{name = "Mario Fetka", email = "mario.fetka@gmail.com"}]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "Flask>=2.2",
     "Flask-HTTPAuth>=4.4",

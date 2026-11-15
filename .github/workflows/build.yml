@@ -18,10 +18,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.9', '3.11', '3.12', '3.13']
+        python: ['3.11', '3.12', '3.13', '3.14']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - run: pip install '.[server]'
@@ -53,7 +53,7 @@ jobs:
         run: |
           apt-get update -q
           apt-get install -y -q --no-install-recommends git ca-certificates build-essential devscripts
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build dependencies
         run: apt-get build-dep -y -q --no-install-recommends ./
       - name: Version for this release
@@ -87,8 +87,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - run: pip install build
@@ -105,7 +105,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
       - uses: docker/metadata-action@v5
         id: meta
