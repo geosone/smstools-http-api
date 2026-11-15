@@ -1,43 +1,39 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
-import re
 import os
-import sys
+import re
 import uuid
 from email.message import Message
-from flask import current_app, request, jsonify
-from .authentication import auth
-from .errors import not_found, forbidden
 
-python_ver = sys.version_info
-python3_ver = (3, 0)
+from flask import current_app, jsonify, request
 
-if python_ver >= python3_ver:
-    use_python3 = True
-    read_mode = "rb"
-    write_mode = "wb"
-else:
-    use_python3 = False
-    read_mode = "r"
-    write_mode = "w"
+from .authentication import username
+from .errors import forbidden, not_found
+
+# Spooler file names: the API uses UUIDs, smsd its own names; never a path.
+_MESSAGE_ID = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+
+
+def spool_path(kind, message_id):
+    if kind not in current_app.config['KINDS'] or not _MESSAGE_ID.match(message_id) \
+            or message_id.endswith('.LOCK'):
+        return None
+    return os.path.join(current_app.config[kind.upper()], message_id)
 
 def access_mobile(mobile):
     if not 'USER_WHITELIST' in current_app.config.keys():
         # Number access control disabled.
         return True
-    if current_app.config['USER_WHITELIST'].get(auth.username()):
-        return mobile in current_app.config['USER_WHITELIST'].get(auth.username(), [])
+    if current_app.config['USER_WHITELIST'].get(username()):
+        return mobile in current_app.config['USER_WHITELIST'].get(username(), [])
     else:
         return True
 
 def validate_mobile(mobile):
-    return re.match(r'^\+?\d+$', mobile) and True
+    return re.match(r'^\+?\d+$', mobile) is not None
 
 def is_admin(user):
-    if 'ADMIN_ACCOUNTS' in current_app.config and auth.username() in current_app.config['ADMIN_ACCOUNTS']:
-        return True
-    return False
+    return user in current_app.config.get('ADMIN_ACCOUNTS', [])
 
 def list_some_sms(kind):
     if kind not in current_app.config['KINDS']:
@@ -55,13 +51,14 @@ def list_some_sms(kind):
     return jsonify(result)
 
 def delete_some_sms(kind, message_id):
-    if kind not in current_app.config['KINDS']:
+    path = spool_path(kind, message_id)
+    if path is None:
         return not_found(None)
 
-    if is_admin(auth.username()):
+    if is_admin(username()):
         result = {}
         try:
-            os.remove(current_app.config[kind.upper()] + "/" + message_id)
+            os.remove(path)
             result['deleted'] = kind + '/' + message_id
             return jsonify(result)
         except OSError:
@@ -70,20 +67,21 @@ def delete_some_sms(kind, message_id):
     return forbidden(None)
 
 def get_some_sms(kind, message_id):
-    if kind not in current_app.config['KINDS']:
+    path = spool_path(kind, message_id)
+    if path is None:
         return not_found(None)
     try:
-        with open(os.path.join(current_app.config[kind.upper()], message_id), read_mode) as fp:
+        with open(path, 'rb') as fp:
             header_flag = True
             result = {}
 
             for line in fp:
                 line = line.decode('utf-8')
-                if line == os.linesep:
+                if line.strip() == '':
                     header_flag = False
                 if header_flag == True:
                     try:
-                        key, val = line.split(':')
+                        key, val = line.split(':', 1)
                         result[key] = val.strip()
                     except ValueError:
                         pass
@@ -101,9 +99,9 @@ def get_some_sms(kind, message_id):
 
             result['message_id'] = message_id
 
-            if result['From'] == auth.username():
+            if result.get('From') == username():
                 return jsonify(result)
-            elif is_admin(auth.username()):
+            elif is_admin(username()):
                 return jsonify(result)
             else:
                 return forbidden(None)
@@ -125,8 +123,10 @@ def detect_coding(text):
 
 def send_sms(data):
     text, coding, parts_count = detect_coding(data['text'])
+    demo = bool(current_app.config.get('DEMO'))
 
     result = {
+        'demo': demo,
         'sent_text': data['text'],
         'parts_count': parts_count,
         'mobiles': {}
@@ -142,34 +142,41 @@ def send_sms(data):
                                                   os.path.basename(current_app.config['SENT']), message_id)
 
         if not validate_mobile(mobile):
-            current_app.logger.info('Message from [%s] to [%s] have invalid mobile number' % (auth.username(), mobile))
+            current_app.logger.info('Message from [%s] to [%s] have invalid mobile number' % (username(), mobile))
             result['mobiles'][mobile]['response'] = 'Failed: invalid mobile number'
             continue
 
         if access_mobile(mobile):
-            lock_file = os.path.join(current_app.config['OUTGOING'], message_id + '.LOCK')
+            # DEMO: nothing goes to smsd; the message lands in the "sent" spool
+            # (readable through dlr_status) marked "Demo: yes".
+            spool = current_app.config['SENT' if demo else 'OUTGOING']
+            lock_file = os.path.join(spool, message_id + '.LOCK')
             m = Message()
-            m.add_header('From', auth.username())
+            m.add_header('From', username())
             m.add_header('To', mobile)
             m.add_header('Alphabet', coding)
+            if demo:
+                m.add_header('Demo', 'yes')
             if data.get('queue'):
                 result.update({'queue' : data['queue']})
                 m.add_header('Queue', result.get('queue'))
             m.set_payload(text)
 
-            with open(lock_file, write_mode) as fp:
-                if use_python3:
-                    fp.write(m.as_bytes())
-                else:
-                    fp.write(m.as_string())
+            with open(lock_file, 'wb') as fp:
+                fp.write(m.as_bytes())
 
             msg_file = lock_file.split('.LOCK')[0]
             os.rename(lock_file, msg_file)
             os.chmod(msg_file, 0o660)
-            current_app.logger.info('Message from [%s] to [%s] placed to the spooler as [%s]' % (auth.username(), mobile, msg_file))
+            if demo:
+                current_app.logger.info('DEMO: message from [%s] to [%s] NOT sent, stored as [%s]: %s'
+                                        % (username(), mobile, msg_file, data['text']))
+            else:
+                current_app.logger.info('Message from [%s] to [%s] placed to the spooler as [%s]'
+                                        % (username(), mobile, msg_file))
             result['mobiles'][mobile]['response'] = 'Ok'
         else:
-            current_app.logger.info('Message from [%s] to [%s] have forbidden mobile number' % (auth.username(), mobile))
+            current_app.logger.info('Message from [%s] to [%s] have forbidden mobile number' % (username(), mobile))
             result['mobiles'][mobile]['response'] = 'Failed: forbidden mobile number'
 
     return result

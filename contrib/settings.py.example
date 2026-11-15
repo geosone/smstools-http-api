@@ -1,0 +1,17 @@
+# /etc/smstools-http-api/settings.py - read via SMSTOOLS_HTTP_API_SETTINGS
+# Overrides config.py without editing it.
+
+# Accept and log messages, but do not hand them to smsd (no modem/SIM yet).
+DEMO = False
+
+# HTTP basic auth users (htpasswd, e.g. "htpasswd -B /etc/smstools-http-api/htpasswd.users ma1sd")
+HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
+
+# Accounts that may read and delete all messages
+#ADMIN_ACCOUNTS = ['admin']
+
+# Default smsd queue
+#DEFAULTQUEUE = "GSM1"
+
+# Per-user number whitelist
+#USER_WHITELIST = {'ma1sd': ['436761234567']}

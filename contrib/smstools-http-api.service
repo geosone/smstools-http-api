@@ -1,0 +1,22 @@
+[Unit]
+Description=REST HTTP API for SMS Server Tools 3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smsd
+Group=smsd
+UMask=0007
+WorkingDirectory=/opt/smstools-http-api
+Environment=FLASK_CONFIG=production
+Environment=SMSTOOLS_HTTP_API_SETTINGS=/etc/smstools-http-api/settings.py
+ExecStart=/usr/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --access-logfile - wsgi:app
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/spool/sms
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

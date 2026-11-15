@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 
 class Config:
 
@@ -14,6 +13,10 @@ class Config:
 
     # Limit for list messages of given kind.
     #LIMIT = 10000
+
+    # Demo mode: accept and log messages but do not hand them to smsd (no modem/SIM yet);
+    # they are stored in the SENT spool with a "Demo: yes" header.
+    DEMO = False
 
     # Whitelist for users
     #USER_WHITELIST = {
@@ -36,7 +39,7 @@ class ProductionConfig(Config):
     # Users database (htpasswd format)
     # Generate hash: openssl passwd -apr1 PASSWORD
     # username:$apr1$qSS22H6v$sem/.bUQXjGUIIHb.MXLw1
-    HTPASSWD_PATH="/usr/local/etc/smstools-http-api/htpasswd.users"
+    HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
 
     @classmethod
     def init_app(cls, app):
@@ -44,12 +47,11 @@ class ProductionConfig(Config):
 
         import logging
 
-        level = logging.INFO
-        logFormatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-        consoleHandler = logging.StreamHandler()
-        consoleHandler.setFormatter(logFormatter)
-        app.logger.setLevel(level)
-        app.logger.addHandler(consoleHandler)
+        # stderr -> journald under systemd
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+        app.logger.setLevel(logging.INFO)
+        app.logger.addHandler(handler)
 
 class DevelopmentConfig(Config):
     DEBUG = True
@@ -69,9 +71,12 @@ class DevelopmentConfig(Config):
 class TestConfig(Config):
     TESTING = True
     DEBUG = True
-    OUTGOING = "outgoing"
-    SENT = "sent"
-    HTPASSWD_PATH = "htpasswd.users"
+    INCOMING = "tmp/test/incoming"
+    OUTGOING = "tmp/test/outgoing"
+    CHECKED = "tmp/test/checked"
+    FAILED = "tmp/test/failed"
+    SENT = "tmp/test/sent"
+    HTPASSWD_PATH = "tmp/test/htpasswd.users"
 
 config = {
     'development': DevelopmentConfig,

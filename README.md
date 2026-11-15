@@ -4,44 +4,43 @@ smstools-http-api
 REST HTTP API with Flask for SMS Server Tools 3 (http://smstools3.kekekasvi.com/)
 
 
+Fork of [lvasiliev/smstools-http-api](https://github.com/lvasiliev/smstools-http-api),
+updated for Python 3 and current Flask (2.2+/3.x), Flask-HTTPAuth 4 and gunicorn.
+
+Changes against upstream:
+
+- Python 3 only, `flask_script` (unmaintained) replaced by `wsgi.py` for gunicorn/`flask run`
+- runs with the Debian packages (trixie: `python3-flask python3-flask-httpauth python3-passlib gunicorn`)
+- site settings in a separate file (`SMSTOOLS_HTTP_API_SETTINGS`), see `contrib/settings.py.example`
+- `DEMO` mode: messages are accepted, logged and stored in the `sent` spool with `Demo: yes`
+  instead of being handed to smsd (for setups without modem/SIM yet)
+- fixed: listing messages recursed endlessly, message IDs could escape the spool directory
+  (`../`), JSON errors keys (`"status: "` -> `"status"`), headers with `:` in the value,
+  wrong Content-Type gave 415 instead of 400; `POST/GET /sms/outgoing` answers 201 as documented
+- systemd unit in `contrib/`
+
 Installation
 ------------
 
-After cloning, create a virtual environment and install the requirements. For Linux and Mac users:
+Debian/Ubuntu with SMS Server Tools 3:
 
-    $ virtualenv venv
-    $ source venv/bin/activate
-    (venv) $ pip install -r requirements.txt
+    # apt install smstools python3-flask python3-flask-httpauth python3-passlib gunicorn apache2-utils
+    # git clone https://github.com/geosone/smstools-http-api.git /opt/smstools-http-api
+    # install -d -m 750 -g smsd /etc/smstools-http-api
+    # install -m 640 -g smsd /opt/smstools-http-api/contrib/settings.py.example /etc/smstools-http-api/settings.py
+    # htpasswd -c -B /etc/smstools-http-api/htpasswd.users myuser
+    # chgrp smsd /etc/smstools-http-api/htpasswd.users; chmod 640 /etc/smstools-http-api/htpasswd.users
+    # cp /opt/smstools-http-api/contrib/smstools-http-api.service /etc/systemd/system/
+    # systemctl enable --now smstools-http-api
 
-If you are on Windows, then use the following commands instead:
+The unit runs as `smsd`, so new spool files belong to smsd. Put a TLS reverse proxy in
+front of it, or bind it to a trusted network only (basic auth is sent in clear text).
 
-    $ virtualenv venv
-    $ venv\Scripts\activate
-    (venv) $ pip install -r requirements.txt
+Development:
 
-Running
--------
-
-To run the server use the following command:
-
-    (venv) $ python manage.py runserver --host 127.0.0.1 -r
-     * Running on http://127.0.0.1:5000/
-     * Restarting with reloader
-
-Then from a different terminal window you can send requests.
-
-If you decide to run this application under a different user than `smsd`, you need to adjust the `outgoing` spooler directory to retain proper permissions for newly created files or `smsd` won't be able to process the messages.
-
-    # Debian, Ubuntu
-    chmod g+s /var/spool/sms/outgoing
-    setfacl -m d:g:smsd:rwX /var/spool/sms/outgoing
-
-    # Fedora, RHEL
-    chmod g+s /var/spool/sms/outgoing
-    setfacl -m d:g:smstools:rwX /var/spool/sms/outgoing
-
-You need to have file system ACLs enabled for this to work.
-
+    $ python3 -m venv venv && . venv/bin/activate && pip install -r requirements.txt
+    $ FLASK_CONFIG=development flask --app wsgi run
+    $ python3 test.py
 
 API Documentation
 -----------------
@@ -58,6 +57,8 @@ API Documentation
     - `queue` - Queue to send message. If queue is not set, you can define DEFAULTQUEUE in config.py or keep smsd choose it.
 
     Status code 400 (Bad Request) is returned in case of a failure to parse input data.
+
+    `demo` is `true` when the API runs in DEMO mode (nothing was handed to smsd).
 
     If `USER_WHITELIST` option is enabled in the `config.py`, number access control lists are applied.
 

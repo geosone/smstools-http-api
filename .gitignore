@@ -1,2 +1,5 @@
 *.py[cod]
 /venv/
+tmp/
+__pycache__/
+venv/
