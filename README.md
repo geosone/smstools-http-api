@@ -136,13 +136,15 @@ contacts answer to their nicknames, groups (categories), given and full names, m
 addresses and numbers.
 
 *Received SMS* — a webhook of type `route` mails an SMS to the contacts named by its
-leading tokens, `@mum @rene dinner at 6`; an SMS without (known) tokens goes to
+@tokens, anywhere in the text: `@mum @rene dinner at 6`, `hi @kids, dinner at 6`; an SMS without (known) tokens goes to
 `default_to`, tokens in `skip` (e.g. `@zabbix`) are left to other hooks. The mail comes
 from `<number>@<domain>`, so answering it sends an SMS back.
 
 *Mail to SMS* — `smstools-http-api-mail2sms SENDER RECIPIENT` reads a mail on stdin and
 sends its text (without quotes and signature, else the subject) to the number or contact
-group in the recipient's local part. Only `MAIL2SMS_SENDERS` and contacts' addresses (in
+group in the recipient's local part, plus the contacts named by @tokens in the text or
+subject (each number once); a mail to `sms@<domain>` (`MAIL2SMS_TOKEN_ADDRESS`) goes only to
+the @tokens. Only `MAIL2SMS_SENDERS` and contacts' addresses (in
 `MAIL2SMS_SENDER_DOMAINS`) may send; it exits with sysexits codes so the MTA bounces with
 a reason. With `MAIL2SMS_TRUSTED_CLIENTS` set, mail from any other client needs a topmost
 `Received-SPF: pass` header from the own gateway, so forged senders are refused;

@@ -9,7 +9,9 @@ per call, smstools-http-api-mail2sms_destination_recipient_limit = 1):
 
 The local part of the recipient is a number (436761234567@, +436761234567@) or a
 name of the address book (CONTACTS): a nickname, a group (category), a given or full
-name.  A group sends to all its members except the sender.
+name.  A group sends to all its members except the sender.  @names anywhere in the
+text or subject ("hi @kids, dinner at 6") add recipients; a mail to
+MAIL2SMS_TOKEN_ADDRESS (default sms@) goes only to them.
 
 Only senders in MAIL2SMS_SENDERS or with an address of a contact (restricted to
 MAIL2SMS_SENDER_DOMAINS if set) may send.  With MAIL2SMS_TRUSTED_CLIENTS (hosts or
@@ -28,6 +30,7 @@ Exit codes follow sysexits.h, so the MTA bounces with a reason: 67 unknown recip
 import argparse
 import email
 import email.policy
+import email.utils
 import html
 import ipaddress
 import os
@@ -37,7 +40,7 @@ import sys
 from . import __version__, contacts
 from .hooks_cli import load_config
 from .message import normalize_number, truncate_text, write_outgoing
-from .webhooks import log
+from .webhooks import find_tokens, log
 
 EX_DATAERR, EX_NOUSER, EX_TEMPFAIL, EX_NOPERM = 65, 67, 75, 77
 
@@ -114,7 +117,7 @@ def allowed_sender(config, book, sender):
 
 
 def recipients(config, book, local, sender_cards):
-    """Numbers a recipient local part stands for (empty if unknown)."""
+    """Numbers a recipient local part (or @token) stands for (empty if unknown)."""
     cc = config.get('COUNTRY_CODE', '43')
     if re.fullmatch(r'\+?\d{5,}', local):
         return [normalize_number(local if local.startswith('+') else '+' + local, cc)]
@@ -126,6 +129,22 @@ def recipients(config, book, local, sender_cards):
             if number not in numbers and (number not in own or len(cards) == 1):
                 numbers.append(number)
     return numbers
+
+
+def local_part(address):
+    address = address.strip().lower()
+    return address.rpartition('@')[0].split('+')[0] if '@' in address else address
+
+
+def header_recipients(msg, domain):
+    """Local parts of the To/Cc addresses in the SMS domain, in order."""
+    found = []
+    for _, address in email.utils.getaddresses([str(v) for v in
+                                                (msg.get_all('To') or []) + (msg.get_all('Cc') or [])]):
+        address = address.strip().lower()
+        if address.rpartition('@')[2] == domain and local_part(address) not in found:
+            found.append(local_part(address))
+    return found
 
 
 def main(argv=None):
@@ -153,10 +172,11 @@ def main(argv=None):
         log('mail2sms: refused sender %s -> %s' % (args.sender, args.recipient))
         return EX_NOPERM
 
-    local = args.recipient.rpartition('@')[0].split('+')[0] if '@' in args.recipient else args.recipient
+    local = local_part(args.recipient)
+    token_address = config.get('MAIL2SMS_TOKEN_ADDRESS', 'sms').lower()
     sender_cards = book.by_email(args.sender)
-    numbers = recipients(config, book, local.lower(), sender_cards)
-    if not numbers:
+    numbers = [] if local == token_address else recipients(config, book, local, sender_cards)
+    if not numbers and local != token_address:
         print('mail2sms: unknown SMS recipient %s' % local)
         log('mail2sms: unknown recipient %s from %s' % (args.recipient, args.sender))
         return EX_NOUSER
@@ -171,6 +191,31 @@ def main(argv=None):
     if not text:
         print('mail2sms: the mail has no text')
         return EX_DATAERR
+
+    # @tokens in the text (and subject) add recipients.  The MTA calls once per
+    # recipient: only the call for the first SMS address of To/Cc (or a Bcc) adds
+    # them, without the numbers the other To/Cc addresses get anyway.
+    domain = args.recipient.rpartition('@')[2].lower()
+    listed = header_recipients(msg, domain)
+    handles_tokens = not listed or local == listed[0] or local not in listed
+    tokens = [t for t in find_tokens('%s\n%s' % (msg.get('Subject', ''), text)) if t != token_address]
+    if handles_tokens and tokens:
+        addressed = {n for other in listed if other not in (local, token_address)
+                     for n in recipients(config, book, other, sender_cards)}
+        unknown = []
+        for token in tokens:
+            found = recipients(config, book, token, sender_cards)
+            if not found:
+                unknown.append(token)
+            numbers += [n for n in found if n not in numbers and n not in addressed]
+        if unknown:
+            log('mail2sms: %s: unknown @%s ignored' % (args.sender, ', @'.join(unknown)))
+    if not numbers:
+        if not handles_tokens:
+            return 0   # sms@ besides other addresses: the first one handled the @names
+        print('mail2sms: no known recipient: name them in the text, e.g. "@mum"')
+        log('mail2sms: %s -> %s: no known @name' % (args.sender, args.recipient))
+        return EX_NOUSER
     if config.get('MAIL2SMS_PREFIX', True) and sender_cards and sender_cards[0]['given']:
         text = '%s: %s' % (sender_cards[0]['given'], text)
     text = truncate_text(text, int(config.get('MAIL2SMS_MAX_PARTS', 3)))

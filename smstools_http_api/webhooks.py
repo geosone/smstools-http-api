@@ -31,7 +31,8 @@ A hook with 'type': 'email' mails the event instead of POSTing it:
     body        string or callable(event) (default: text plus the main headers)
 
 A hook with 'type': 'route' mails a received SMS to the contacts (CONTACTS, see
-contacts.py) named by its leading @tokens ("@mum @rene see you at 6"):
+contacts.py) named by its @tokens, anywhere in the text ("@mum @rene see you at 6",
+"hi @kids dinner is ready"):
 
     domain       mail2sms domain; the mail comes from <number>@domain, so replies are SMS
     default_to   address(es) for SMS without (known) tokens
@@ -154,13 +155,25 @@ def send_mail(hook, event):
     return smtp_send(hook, msg)
 
 
+_TOKEN = re.compile(r'(?<![\w.+-])@([\w][\w.+-]*)')
+
+
+def find_tokens(text):
+    """All '@name' tokens of a text, anywhere (not mail addresses): lower case, in order."""
+    tokens = []
+    for token in _TOKEN.findall(text or ''):
+        token = token.lower().rstrip('.-')
+        if token and token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
 def parse_tokens(text):
-    """Split the leading '@name' tokens off an SMS: '@mum @rene hi' -> (['mum', 'rene'], 'hi')."""
-    match = re.match(r'\s*((?:@[\w.+-]+[\s,;:]*)+)', text or '')
-    if not match:
-        return [], (text or '').strip()
-    tokens = [t.lower().rstrip('.') for t in re.findall(r'@([\w.+-]+)', match.group(1))]
-    return tokens, text[match.end():].strip()
+    """'@mum @rene hi @x' -> (['mum', 'rene', 'x'], 'hi @x'): every token, and the text
+    without the tokens at its start (tokens inside the text stay, they are part of it)."""
+    text = text or ''
+    match = re.match(r'\s*((?:@[\w.+-]+[\s,;:]*)+)', text)
+    return find_tokens(text), (text[match.end():] if match else text).strip()
 
 
 ROUTE_DEFAULTS = {

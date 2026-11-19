@@ -104,8 +104,8 @@ class Directory:
             if card['name']:
                 keys |= {card['name'], card['name'].replace(' ', ''), card['name'].replace(' ', '.')}
             keys |= {e.partition('@')[0] for e in card['emails']}
-            for key in keys:
-                self._names.setdefault(key.lower(), []).append(card)
+            for key in {k.lower() for k in keys}:
+                self._names.setdefault(key, []).append(card)
 
     def numbers(self, card):
         """Mobile numbers of a contact (CELL, else any phone), normalized."""

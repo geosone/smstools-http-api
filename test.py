@@ -332,8 +332,9 @@ class ContactsTestCase(unittest.TestCase):
         self.assertEqual(cards[0]['emails'], ['a@example.org'])
 
     def test_tokens(self):
-        self.assertEqual(webhooks.parse_tokens('@Mum, @rene: Hallo @x'), (['mum', 'rene'], 'Hallo @x'))
+        self.assertEqual(webhooks.parse_tokens('@Mum, @rene: Hallo @x.'), (['mum', 'rene', 'x'], 'Hallo @x.'))
         self.assertEqual(webhooks.parse_tokens('Hallo'), ([], 'Hallo'))
+        self.assertEqual(webhooks.find_tokens('hei @Lauser, mail an a@b.at, @lauser!'), ['lauser'])
 
 
 class RouteTestCase(unittest.TestCase):
@@ -378,6 +379,11 @@ class RouteTestCase(unittest.TestCase):
         msg, = self.deliver('@nobody hi')
         self.assertEqual(msg['To'], 'mario@example.org')
         self.assertIn('@nobody', msg.get_content())
+
+    def test_token_inside_text(self):
+        msg, = self.deliver('hei ihr @buben, Essen um 6')
+        self.assertEqual(msg['To'], 'mario@example.org')
+        self.assertTrue(msg.get_content().startswith('hei ihr @buben, Essen um 6\n'))
 
     def test_skipped_token_left_to_other_hook(self):
         self.assertEqual(self.deliver('@zabbix ack 42'), [])
@@ -429,6 +435,24 @@ class Mail2smsTestCase(unittest.TestCase):
         self.assertEqual(self.run_mail('mario@example.org', 'nobody@sms.example.org', mail), 67)
         self.assertEqual(self.run_mail('robot@other.example', 'mum@sms.example.org', mail), 0)
         self.assertEqual(self.spooled(), [('436641111111', 'hi')])
+
+    def test_tokens_in_mail_text(self):
+        mail = 'To: sms@sms.example.org\nSubject: Essen\n\nhei ihr @eltern, kommt um 6\n'
+        self.assertEqual(self.run_mail('mario@example.org', 'sms@sms.example.org', mail), 0)
+        self.assertEqual(self.spooled(), [('436641111111', 'Mario: hei ihr @eltern, kommt um 6'),
+                                          ('436812222222', 'Mario: hei ihr @eltern, kommt um 6')])
+
+    def test_tokens_add_to_address_without_duplicates(self):
+        # To: mum + dad, text names @eltern (= mum, dad) and @mario (the sender himself)
+        mail = 'To: mum@sms.example.org, dad@sms.example.org\n\n@eltern @mario hallo\n'
+        for rcpt in ('mum@sms.example.org', 'dad@sms.example.org'):
+            self.assertEqual(self.run_mail('mario@example.org', rcpt, mail), 0)
+        self.assertEqual(sorted(t for t, _ in self.spooled()), ['436641111111', '436763333333', '436812222222'])
+
+    def test_token_address_without_known_names(self):
+        mail = 'To: sms@sms.example.org\n\nhallo @nobody\n'
+        self.assertEqual(self.run_mail('mario@example.org', 'sms@sms.example.org', mail), 67)
+        self.assertEqual(self.spooled(), [])
 
     def test_spf_for_untrusted_clients(self):
         from smstools_http_api import mail2sms

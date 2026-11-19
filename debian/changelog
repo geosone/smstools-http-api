@@ -4,11 +4,12 @@ smstools-http-api (2.3.0) unstable; urgency=medium
     or a file; contacts answer to nicknames, groups (categories), names,
     e-mail addresses and numbers.
   * Webhooks of type 'route': a received SMS goes by mail to the contacts
-    named by its leading @tokens (default recipient otherwise); the mail
+    named by its @tokens, anywhere in the text (default recipient otherwise); the mail
     comes from <number>@<sms domain>, so a reply becomes an SMS.
   * smstools-http-api-mail2sms: MTA pipe that sends a mail to
     <name or number>@<sms domain> as SMS (allowed senders only; mail from
-    untrusted clients needs Received-SPF: pass).
+    untrusted clients needs Received-SPF: pass); @names in the text add
+    recipients, a mail to sms@<domain> goes only to them.
 
  -- Mario Fetka <mario.fetka@gmail.com>  Thu, 19 Nov 2026 15:00:00 +0100
 
