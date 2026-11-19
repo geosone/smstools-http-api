@@ -449,6 +449,22 @@ class Mail2smsTestCase(unittest.TestCase):
         self.assertEqual(run('10.0.0.9', 'Received-SPF: Pass (gmail.example: ok)\n'), 0)
         self.assertEqual(len(self.spooled()), 2)
 
+    def test_spf_only_from_the_gateway(self):
+        from smstools_http_api import mail2sms
+        gw = 'mailgw.example.org'
+        entry = 'Received: from mail-x.gmail.example (mail-x.gmail.example [192.0.2.1])\n by %s (Proxmox) with ESMTPS id 1\n' % gw
+        local = 'Received: from %s (localhost [127.0.0.1])\n by %s (Proxmox) with ESMTP id 2\n' % (gw, gw)
+        ours = 'Received-SPF: pass (gmail.example: 192.0.2.1 is authorized) receiver=%s; identity=mailfrom\n' % gw
+        forged = 'Received-SPF: pass (forged) receiver=%s; identity=mailfrom\n' % gw
+        check = lambda headers: mail2sms.spf_pass(email.message_from_string(headers + 'Subject: x\n\nhi\n'), gw)
+        import email
+        self.assertTrue(check(local + ours + entry))
+        self.assertFalse(check(local + entry + forged))                  # sender wrote it
+        self.assertFalse(check(local + ours.replace('pass', 'softfail') + entry + forged))
+        self.assertFalse(check(local + ours.replace(gw, 'other.example') + entry))
+        self.assertFalse(check(local + ours.replace(gw, gw + '.evil.example') + entry))
+        self.assertTrue(mail2sms.spf_pass(email.message_from_string(ours + '\nhi'), None))
+
     def test_long_unicode_text_is_cut(self):
         mail = 'Content-Type: text/plain; charset=utf-8\n\n' + 'ä' * 500 + '\n-- \nSignatur\n'
         self.assertEqual(self.run_mail('mario@example.org', 'dad@sms.example.org', mail), 0)

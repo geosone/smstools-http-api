@@ -14,8 +14,10 @@ name.  A group sends to all its members except the sender.
 Only senders in MAIL2SMS_SENDERS or with an address of a contact (restricted to
 MAIL2SMS_SENDER_DOMAINS if set) may send.  With MAIL2SMS_TRUSTED_CLIENTS (hosts or
 networks, e.g. the own mail server with authenticated submission), mail from any other
-client (--client ${client_address}) needs a topmost "Received-SPF: pass" header, as the
-own mail gateway adds it, so a forged sender address is refused.  The SMS text is the text part of the mail
+client (--client ${client_address}) needs a "Received-SPF: pass" header, as the own
+mail gateway adds it, so a forged sender address is refused.  MAIL2SMS_SPF_RECEIVER (the
+gateway's host name) only accepts the gateway's own header (receiver=<gateway>, above
+the hop where the mail entered the gateway), not one the sender wrote into the mail.  The SMS text is the text part of the mail
 without quoted lines and signature, or the subject if that is empty, prefixed with the
 sender's given name (MAIL2SMS_PREFIX) and cut to MAIL2SMS_MAX_PARTS SMS.
 
@@ -77,10 +79,28 @@ def trusted_client(config, client):
     return any(address in ipaddress.ip_network(net, strict=False) for net in trusted)
 
 
-def spf_pass(msg):
-    """The topmost Received-SPF header (added by our own mail gateway) says pass."""
-    results = msg.get_all('Received-SPF') or []
-    return bool(results) and str(results[0]).strip().lower().startswith('pass')
+def spf_pass(msg, receiver=None):
+    """The own mail gateway checked SPF and it passed.
+
+    Without receiver: the topmost Received-SPF header says pass.  With receiver (the
+    gateway's host name, MAIL2SMS_SPF_RECEIVER): a 'pass' with receiver=<gateway> is only
+    counted above the hop where the mail entered the gateway ("Received: from <other
+    host> by <gateway>"); headers below it come from the sender and may be forged.
+    """
+    gateway = (receiver or '').lower()
+    for name, value in msg.items():   # top-down: newest header first
+        name, value = name.lower(), ' '.join(str(value).split())
+        if name == 'received-spf':
+            if not gateway:
+                return value.lower().startswith('pass')
+            if value.lower().startswith('pass') and \
+                    re.search(r'\breceiver=%s(?![\w.-])' % re.escape(gateway), value, re.I):
+                return True
+        elif name == 'received' and gateway:
+            hop = re.match(r'from\s+(\S+).*?\bby\s+(\S+)', value, re.I)
+            if hop and hop.group(2).lower() == gateway and hop.group(1).lower() not in (gateway, 'localhost'):
+                return False   # entry into the gateway: everything below is the sender's
+    return False
 
 
 def allowed_sender(config, book, sender):
@@ -142,7 +162,7 @@ def main(argv=None):
         return EX_NOUSER
 
     msg = email.message_from_binary_file(sys.stdin.buffer, policy=email.policy.default)
-    if not trusted_client(config, args.client) and not spf_pass(msg):
+    if not trusted_client(config, args.client) and not spf_pass(msg, config.get('MAIL2SMS_SPF_RECEIVER')):
         print('mail2sms: sender %s not verified (SPF)' % args.sender)
         log('mail2sms: refused unverified sender %s (client %s) -> %s'
             % (args.sender, args.client, args.recipient))

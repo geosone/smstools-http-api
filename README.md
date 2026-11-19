@@ -145,7 +145,8 @@ sends its text (without quotes and signature, else the subject) to the number or
 group in the recipient's local part. Only `MAIL2SMS_SENDERS` and contacts' addresses (in
 `MAIL2SMS_SENDER_DOMAINS`) may send; it exits with sysexits codes so the MTA bounces with
 a reason. With `MAIL2SMS_TRUSTED_CLIENTS` set, mail from any other client needs a topmost
-`Received-SPF: pass` header from the own gateway, so forged senders are refused. Postfix on the smsd host (`sms.example.org` relayed to it):
+`Received-SPF: pass` header from the own gateway, so forged senders are refused;
+`MAIL2SMS_SPF_RECEIVER` (the gateway's name) ignores such headers written by the sender. Postfix on the smsd host (`sms.example.org` relayed to it):
 
     # main.cf
     relay_domains = sms.example.org

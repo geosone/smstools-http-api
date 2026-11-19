@@ -77,6 +77,9 @@ HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
 # mail from other clients needs a topmost 'Received-SPF: pass' (added by the own
 # gateway). Postfix passes the client: argv=... --client ${client_address} ${sender} ${recipient}
 #MAIL2SMS_TRUSTED_CLIENTS = ['192.0.2.10']
+# Only count the Received-SPF header of this gateway (receiver=..., above the hop
+# where the mail entered it), not one the sender wrote into the mail
+#MAIL2SMS_SPF_RECEIVER = 'mx.example.org'
 #MAIL2SMS_PREFIX = True       # "Mario: text"
 #MAIL2SMS_MAX_PARTS = 3
 
