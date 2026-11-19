@@ -73,6 +73,10 @@ HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
 # address of a contact (in these domains, if set) plus MAIL2SMS_SENDERS.
 #MAIL2SMS_SENDER_DOMAINS = ['example.org']
 #MAIL2SMS_SENDERS = []
+# Hosts/networks whose mail is trusted (own mail server, authenticated submission);
+# mail from other clients needs a topmost 'Received-SPF: pass' (added by the own
+# gateway). Postfix passes the client: argv=... --client ${client_address} ${sender} ${recipient}
+#MAIL2SMS_TRUSTED_CLIENTS = ['192.0.2.10']
 #MAIL2SMS_PREFIX = True       # "Mario: text"
 #MAIL2SMS_MAX_PARTS = 3
 

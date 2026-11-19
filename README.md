@@ -144,7 +144,8 @@ from `<number>@<domain>`, so answering it sends an SMS back.
 sends its text (without quotes and signature, else the subject) to the number or contact
 group in the recipient's local part. Only `MAIL2SMS_SENDERS` and contacts' addresses (in
 `MAIL2SMS_SENDER_DOMAINS`) may send; it exits with sysexits codes so the MTA bounces with
-a reason. Postfix on the smsd host (`sms.example.org` relayed to it):
+a reason. With `MAIL2SMS_TRUSTED_CLIENTS` set, mail from any other client needs a topmost
+`Received-SPF: pass` header from the own gateway, so forged senders are refused. Postfix on the smsd host (`sms.example.org` relayed to it):
 
     # main.cf
     relay_domains = sms.example.org
@@ -152,7 +153,7 @@ a reason. Postfix on the smsd host (`sms.example.org` relayed to it):
     smstools-http-api-mail2sms_destination_recipient_limit = 1
     # master.cf
     smstools-http-api-mail2sms unix - n n - 4 pipe
-      flags=Rq user=smsd argv=/usr/bin/smstools-http-api-mail2sms ${sender} ${recipient}
+      flags=Rq user=smsd argv=/usr/bin/smstools-http-api-mail2sms --client ${client_address} ${sender} ${recipient}
 
 ### Development
 

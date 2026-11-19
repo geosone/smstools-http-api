@@ -430,6 +430,25 @@ class Mail2smsTestCase(unittest.TestCase):
         self.assertEqual(self.run_mail('robot@other.example', 'mum@sms.example.org', mail), 0)
         self.assertEqual(self.spooled(), [('436641111111', 'hi')])
 
+    def test_spf_for_untrusted_clients(self):
+        from smstools_http_api import mail2sms
+        with open(self.settings, 'a') as fp:
+            fp.write('MAIL2SMS_SENDER_DOMAINS = []\nMAIL2SMS_TRUSTED_CLIENTS = ["10.0.0.10"]\n')
+        base = 'From: lydia@gmail.example\nSubject: hi\n\n'
+
+        def run(client, headers=''):
+            stdin = mock.Mock()
+            stdin.buffer = __import__('io').BytesIO((headers + base).encode())
+            with mock.patch('sys.stdin', stdin), mock.patch('sys.stdout', __import__('io').StringIO()):
+                return mail2sms.main(['-c', 'test', '--settings', self.settings, '--client', client,
+                                      'lydia@gmail.example', 'dad@sms.example.org'])
+
+        self.assertEqual(run('10.0.0.10'), 0)
+        self.assertEqual(run('10.0.0.9'), 77)
+        self.assertEqual(run('10.0.0.9', 'Received-SPF: softfail (x)\nReceived-SPF: pass (forged)\n'), 77)
+        self.assertEqual(run('10.0.0.9', 'Received-SPF: Pass (gmail.example: ok)\n'), 0)
+        self.assertEqual(len(self.spooled()), 2)
+
     def test_long_unicode_text_is_cut(self):
         mail = 'Content-Type: text/plain; charset=utf-8\n\n' + 'ä' * 500 + '\n-- \nSignatur\n'
         self.assertEqual(self.run_mail('mario@example.org', 'dad@sms.example.org', mail), 0)

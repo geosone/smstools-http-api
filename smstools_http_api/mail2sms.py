@@ -12,7 +12,10 @@ name of the address book (CONTACTS): a nickname, a group (category), a given or 
 name.  A group sends to all its members except the sender.
 
 Only senders in MAIL2SMS_SENDERS or with an address of a contact (restricted to
-MAIL2SMS_SENDER_DOMAINS if set) may send.  The SMS text is the text part of the mail
+MAIL2SMS_SENDER_DOMAINS if set) may send.  With MAIL2SMS_TRUSTED_CLIENTS (hosts or
+networks, e.g. the own mail server with authenticated submission), mail from any other
+client (--client ${client_address}) needs a topmost "Received-SPF: pass" header, as the
+own mail gateway adds it, so a forged sender address is refused.  The SMS text is the text part of the mail
 without quoted lines and signature, or the subject if that is empty, prefixed with the
 sender's given name (MAIL2SMS_PREFIX) and cut to MAIL2SMS_MAX_PARTS SMS.
 
@@ -24,6 +27,7 @@ import argparse
 import email
 import email.policy
 import html
+import ipaddress
 import os
 import re
 import sys
@@ -61,6 +65,24 @@ def mail_text(msg):
     return text or str(msg.get('Subject', '')).strip()
 
 
+def trusted_client(config, client):
+    """True if the mail came from a MAIL2SMS_TRUSTED_CLIENTS host (or no list is set)."""
+    trusted = config.get('MAIL2SMS_TRUSTED_CLIENTS')
+    if not trusted:
+        return True
+    try:
+        address = ipaddress.ip_address((client or '').strip('[]'))
+    except ValueError:
+        return False
+    return any(address in ipaddress.ip_network(net, strict=False) for net in trusted)
+
+
+def spf_pass(msg):
+    """The topmost Received-SPF header (added by our own mail gateway) says pass."""
+    results = msg.get_all('Received-SPF') or []
+    return bool(results) and str(results[0]).strip().lower().startswith('pass')
+
+
 def allowed_sender(config, book, sender):
     sender = (sender or '').strip().lower()
     if sender in (s.lower() for s in config.get('MAIL2SMS_SENDERS', [])):
@@ -93,6 +115,7 @@ def main(argv=None):
                         choices=['production', 'development', 'test'])
     parser.add_argument('--settings', help='settings file (overrides SMSTOOLS_HTTP_API_SETTINGS)')
     parser.add_argument('--dry-run', action='store_true', help='print what would be sent')
+    parser.add_argument('--client', help='address of the SMTP client (Postfix ${client_address})')
     parser.add_argument('--version', action='version', version='%(prog)s ' + __version__)
     parser.add_argument('sender')
     parser.add_argument('recipient')
@@ -119,6 +142,11 @@ def main(argv=None):
         return EX_NOUSER
 
     msg = email.message_from_binary_file(sys.stdin.buffer, policy=email.policy.default)
+    if not trusted_client(config, args.client) and not spf_pass(msg):
+        print('mail2sms: sender %s not verified (SPF)' % args.sender)
+        log('mail2sms: refused unverified sender %s (client %s) -> %s'
+            % (args.sender, args.client, args.recipient))
+        return EX_NOPERM
     text = mail_text(msg)
     if not text:
         print('mail2sms: the mail has no text')

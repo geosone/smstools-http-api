@@ -7,7 +7,8 @@ smstools-http-api (2.3.0) unstable; urgency=medium
     named by its leading @tokens (default recipient otherwise); the mail
     comes from <number>@<sms domain>, so a reply becomes an SMS.
   * smstools-http-api-mail2sms: MTA pipe that sends a mail to
-    <name or number>@<sms domain> as SMS (allowed senders only).
+    <name or number>@<sms domain> as SMS (allowed senders only; mail from
+    untrusted clients needs Received-SPF: pass).
 
  -- Mario Fetka <mario.fetka@gmail.com>  Thu, 19 Nov 2026 15:00:00 +0100
 
