@@ -23,6 +23,16 @@ class Config:
     #    'lvv': [ '911' ],
     #}
 
+    # Webhooks for smsd events, delivered by smstools-http-api-webhooks
+    # (see smstools_http_api/webhooks.py and contrib/settings.py.example).
+    WEBHOOKS = []
+    WEBHOOK_MAX_AGE = 24 * 3600   # give up (move to WEBHOOK_QUEUE/failed) after this
+    WEBHOOK_POLL = 2              # worker poll interval, seconds
+
+    # Eventhandler that was configured in smsd.conf before; smstools-http-api-event
+    # runs it first with the same arguments.
+    #EVENTHANDLER_CHAIN = '/usr/local/bin/my-smsd-handler'
+
     @staticmethod
     def init_app(app):
         pass
@@ -35,6 +45,7 @@ class ProductionConfig(Config):
     CHECKED  = "/var/spool/sms/checked"
     FAILED   = "/var/spool/sms/failed"
     SENT     = "/var/spool/sms/sent"
+    WEBHOOK_QUEUE = "/var/spool/sms/webhooks"
 
     # Users database (htpasswd format)
     # Generate hash: openssl passwd -apr1 PASSWORD
@@ -64,6 +75,7 @@ class DevelopmentConfig(Config):
     CHECKED  = "tmp/checked"
     FAILED   = "tmp/failed"
     SENT     = "tmp/sent"
+    WEBHOOK_QUEUE = "tmp/webhooks"
 
     # Users database (htpasswd format)
     # Generate hash: openssl passwd -apr1 PASSWORD
@@ -78,6 +90,7 @@ class TestConfig(Config):
     CHECKED = "tmp/test/checked"
     FAILED = "tmp/test/failed"
     SENT = "tmp/test/sent"
+    WEBHOOK_QUEUE = "tmp/test/webhooks"
     HTPASSWD_PATH = "tmp/test/htpasswd.users"
 
 config = {

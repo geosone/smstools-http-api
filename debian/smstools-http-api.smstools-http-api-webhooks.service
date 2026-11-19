@@ -1,0 +1,23 @@
+[Unit]
+Description=Webhooks for SMS Server Tools 3 events (smstools-http-api)
+Documentation=https://github.com/geosone/smstools-http-api
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smsd
+Group=smsd
+UMask=0007
+Environment=SMSTOOLS_HTTP_API_SETTINGS=/etc/smstools-http-api/settings.py
+EnvironmentFile=-/etc/default/smstools-http-api
+ExecStart=/usr/bin/smstools-http-api-webhooks
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/spool/sms
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

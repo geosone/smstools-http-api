@@ -15,3 +15,35 @@ HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
 
 # Per-user number whitelist
 #USER_WHITELIST = {'ma1sd': ['436761234567']}
+
+# Webhooks for smsd events. Needs in /etc/smsd.conf (global section):
+#   eventhandler = /usr/bin/smstools-http-api-event
+# and the worker: systemctl enable --now smstools-http-api-webhooks
+# Events: RECEIVED, SENT, FAILED, REPORT, CALL. The default body is the event:
+#   {"event": "RECEIVED", "message_id": "GSM1.xyz", "kind": "incoming",
+#    "from": "436761234567", "to": null, "modem": "GSM1", "sms_id": null,
+#    "text": "...", "headers": {"From": ..., "Sent": ..., ...}, "time": "2026-...+00:00"}
+# Optional per hook: headers, auth=(user, password), timeout, verify=False,
+# filter(event) -> bool, payload(event) -> body, check(status, body) -> bool.
+#WEBHOOKS = [
+#    {'name': 'example', 'url': 'https://hooks.example.org/sms',
+#     'events': ['RECEIVED'], 'headers': {'Authorization': 'Bearer TOKEN'}},
+#
+#    # Zabbix >= 7.0: push received SMS into a trapper item (key sms.received,
+#    # type text) of host "gotify" via the API (token of a user with write
+#    # access to that host). history.push answers HTTP 200 also on errors,
+#    # so "check" looks into the JSON-RPC response.
+#    {'name': 'zabbix', 'url': 'https://zabbix.example.org/api_jsonrpc.php',
+#     'events': ['RECEIVED'],
+#     'headers': {'Authorization': 'Bearer ZABBIX_API_TOKEN'},
+#     'payload': lambda e: {'jsonrpc': '2.0', 'method': 'history.push', 'id': 1,
+#                           'params': [{'host': 'gotify', 'key': 'sms.received',
+#                                       'value': '%s: %s' % (e['from'], e['text'])}]},
+#     'check': lambda status, body: status == 200 and 'error' not in body},
+#]
+
+# Give up on an event after this many seconds (moved to WEBHOOK_QUEUE/failed)
+#WEBHOOK_MAX_AGE = 86400
+
+# Eventhandler that was set in smsd.conf before; it is run first with the same arguments
+#EVENTHANDLER_CHAIN = '/usr/local/bin/my-smsd-handler'

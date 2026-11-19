@@ -1,3 +1,12 @@
+smstools-http-api (2.1.0) unstable; urgency=medium
+
+  * Webhooks for smsd events: smstools-http-api-event (smsd eventhandler)
+    queues RECEIVED/SENT/FAILED/REPORT/CALL events, the new
+    smstools-http-api-webhooks service delivers them with retries
+    (WEBHOOKS in settings.py; custom payload, e.g. Zabbix history.push).
+
+ -- Mario Fetka <mario.fetka@gmail.com>  Thu, 19 Nov 2026 12:00:00 +0100
+
 smstools-http-api (2.0.0) unstable; urgency=medium
 
   * Python 3 / Flask 2.2+ port of lvasiliev/smstools-http-api, DEMO mode,

@@ -7,6 +7,7 @@ from email.message import Message
 
 from flask import current_app, jsonify, request
 
+from ..message import read_message
 from .authentication import username
 from .errors import forbidden, not_found
 
@@ -71,42 +72,13 @@ def get_some_sms(kind, message_id):
     if path is None:
         return not_found(None)
     try:
-        with open(path, 'rb') as fp:
-            header_flag = True
-            result = {}
-
-            for line in fp:
-                line = line.decode('utf-8')
-                if line.strip() == '':
-                    header_flag = False
-                if header_flag == True:
-                    try:
-                        key, val = line.split(':', 1)
-                        result[key] = val.strip()
-                    except ValueError:
-                        pass
-                # text message
-                if header_flag == False:
-                    if result.get('Alphabet', '').startswith('UCS'):
-                        charset = 'utf-16-be'
-                    else:
-                        # Since UTF-8 is backwards compatible with US-ASCII and
-                        # outgoing messages sent from the command line will be
-                        # in UTF-8 without an Alphabet option, this will work.
-                        charset = 'utf-8'
-                    for line in fp:
-                        result['text'] = result.get('text', '') + line.decode(charset)
-
-            result['message_id'] = message_id
-
-            if result.get('From') == username():
-                return jsonify(result)
-            elif is_admin(username()):
-                return jsonify(result)
-            else:
-                return forbidden(None)
+        result = read_message(path)
     except EnvironmentError:
         return not_found(None)
+
+    if result.get('From') == username() or is_admin(username()):
+        return jsonify(result)
+    return forbidden(None)
 
 def detect_coding(text):
     text_len=len(text)

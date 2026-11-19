@@ -28,6 +28,8 @@ server = ["gunicorn>=20"]
 
 [project.scripts]
 smstools-http-api = "smstools_http_api.__main__:main"
+smstools-http-api-event = "smstools_http_api.hooks_cli:event_main"
+smstools-http-api-webhooks = "smstools_http_api.hooks_cli:worker_main"
 
 [project.urls]
 Homepage = "https://github.com/geosone/smstools-http-api"

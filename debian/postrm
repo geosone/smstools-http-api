@@ -2,7 +2,7 @@
 set -e
 
 if [ "$1" = purge ]; then
-    rm -rf /etc/smstools-http-api
+    rm -rf /etc/smstools-http-api /var/spool/sms/webhooks
 fi
 
 #DEBHELPER#

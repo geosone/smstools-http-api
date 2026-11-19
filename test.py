@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 
 import base64
+import http.server
 import json
 import os
 import shutil
+import threading
+import time
 import unittest
+from unittest import mock
 
 from passlib.apache import HtpasswdFile
 
-from smstools_http_api import create_app
+from smstools_http_api import create_app, hooks_cli, webhooks
 
 BASE = 'tmp/test'
 AUTH = {'Authorization': 'Basic ' + base64.b64encode(b'test:test').decode()}
@@ -105,6 +109,149 @@ class AppTestCase(unittest.TestCase):
 
     def test_monitoring(self):
         self.assertEqual(self.client.get('/api/v1.0/monitoring').get_json()['monitoring'], 'ok')
+
+
+class Recorder(http.server.BaseHTTPRequestHandler):
+    """Webhook target: records POSTs, answers with the status in .status."""
+    status = 200
+    requests = []
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers['Content-Length']))
+        Recorder.requests.append((self.path, dict(self.headers), json.loads(body)))
+        self.send_response(Recorder.status)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"result": true}')
+
+    def log_message(self, *args):
+        pass
+
+
+class WebhookTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.HTTPServer(('127.0.0.1', 0), Recorder)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.url = 'http://127.0.0.1:%d' % cls.server.server_port
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def setUp(self):
+        shutil.rmtree(BASE, ignore_errors=True)
+        os.makedirs(os.path.join(BASE, 'incoming'))
+        Recorder.status, Recorder.requests = 200, []
+        self.config = dict(create_app('test').config)
+        self.config['WEBHOOKS'] = [{'name': 'a', 'url': self.url + '/a', 'headers': {'X-Token': 't'}}]
+        self.sms = os.path.join(BASE, 'incoming', 'GSM1.abc')
+        with open(self.sms, 'wb') as fp:
+            fp.write(b'From: 436761234567\nSent: 26-11-19 11:29:14\nAlphabet: ISO\n\nTest 3')
+
+    def tearDown(self):
+        shutil.rmtree(BASE, ignore_errors=True)
+
+    def queued(self):
+        qdir = os.path.join(BASE, 'webhooks')
+        return sorted(n for n in os.listdir(qdir) if n.endswith('.json')) if os.path.isdir(qdir) else []
+
+    def test_received_is_delivered(self):
+        webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+        self.assertEqual(len(self.queued()), 1)
+        self.assertEqual(webhooks.deliver_pending(self.config), {'done': 1})
+        self.assertEqual(self.queued(), [])
+        path, headers, event = Recorder.requests[0]
+        self.assertEqual(path, '/a')
+        self.assertEqual(headers['X-Token'], 't')
+        self.assertEqual(event['event'], 'RECEIVED')
+        self.assertEqual(event['from'], '436761234567')
+        self.assertEqual(event['text'], 'Test 3')
+        self.assertEqual(event['message_id'], 'GSM1.abc')
+        self.assertEqual(event['kind'], 'incoming')
+
+    def test_unsubscribed_event_not_queued(self):
+        self.assertIsNone(webhooks.enqueue(self.config, 'SENT', self.sms))
+        self.assertEqual(self.queued(), [])
+
+    def test_retry_then_success(self):
+        webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+        Recorder.status = 503
+        self.assertEqual(webhooks.deliver_pending(self.config), {'retry': 1})
+        # not due yet
+        self.assertEqual(webhooks.deliver_pending(self.config), {'wait': 1})
+        Recorder.status = 200
+        self.assertEqual(webhooks.deliver_pending(self.config, now=time.time() + 60), {'done': 1})
+        self.assertEqual(len(Recorder.requests), 2)
+
+    def test_gives_up_after_max_age(self):
+        webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+        Recorder.status = 500
+        self.config['WEBHOOK_MAX_AGE'] = 10
+        self.assertEqual(webhooks.deliver_pending(self.config, now=time.time() + 20), {'failed': 1})
+        self.assertEqual(len(os.listdir(os.path.join(BASE, 'webhooks', 'failed'))), 1)
+
+    def test_only_failed_hook_is_retried(self):
+        self.config['WEBHOOKS'].append({'name': 'b', 'url': 'http://127.0.0.1:1/unreachable', 'timeout': 2})
+        webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+        self.assertEqual(webhooks.deliver_pending(self.config), {'retry': 1})
+        self.config['WEBHOOKS'][1]['url'] = self.url + '/b'
+        self.assertEqual(webhooks.deliver_pending(self.config, now=time.time() + 60), {'done': 1})
+        self.assertEqual([r[0] for r in Recorder.requests], ['/a', '/b'])
+
+    def test_payload_filter_check(self):
+        self.config['WEBHOOKS'] = [
+            {'name': 'zabbix', 'url': self.url + '/z',
+             'payload': lambda e: {'method': 'history.push', 'params': [{'value': e['text']}]},
+             'check': lambda status, body: json.loads(body).get('result') is True},
+            {'name': 'skip', 'url': self.url + '/s', 'filter': lambda e: e['from'] == 'nobody'},
+        ]
+        webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+        self.assertEqual(webhooks.deliver_pending(self.config), {'done': 1})
+        self.assertEqual(len(Recorder.requests), 1)
+        self.assertEqual(Recorder.requests[0][2], {'method': 'history.push', 'params': [{'value': 'Test 3'}]})
+
+    def test_eventhandler_unreadable_settings(self):
+        # Debian runs smsd as smsd:dialout, the settings file is root:smsd 640
+        real = hooks_cli.load_config
+        calls = []
+
+        def fake(name, settings):
+            calls.append(settings)
+            if settings is None:
+                raise PermissionError(13, 'Permission denied')
+            return dict(real('test', settings), WEBHOOKS=[])
+
+        with mock.patch.object(hooks_cli, 'load_config', fake):
+            self.assertEqual(hooks_cli.event_main(['RECEIVED', self.sms]), 0)
+        self.assertEqual(calls, [None, os.devnull])
+        self.assertEqual(len(self.queued()), 1)
+        # the worker has the settings: a subscribed hook gets it ...
+        self.assertEqual(webhooks.deliver_pending(self.config), {'done': 1})
+        self.assertEqual(len(Recorder.requests), 1)
+        # ... an event nobody subscribed to is dropped
+        with mock.patch.object(hooks_cli, 'load_config', fake):
+            hooks_cli.event_main(['SENT', self.sms])
+        self.assertEqual(webhooks.deliver_pending(self.config), {'done': 1})
+        self.assertEqual(len(Recorder.requests), 1)
+
+    def test_eventhandler_command(self):
+        settings = os.path.join(BASE, 'settings.py')
+        with open(settings, 'w') as fp:
+            fp.write('WEBHOOKS = [{"name": "a", "url": %r, "events": ["RECEIVED", "SENT"]}]\n' % (self.url + '/a'))
+        env = dict(os.environ, FLASK_CONFIG='test', SMSTOOLS_HTTP_API_SETTINGS=settings)
+        old = os.environ.copy()
+        os.environ.update(env)
+        try:
+            self.assertEqual(hooks_cli.event_main(['RECEIVED', self.sms]), 0)
+            self.assertEqual(hooks_cli.event_main(['CALL', self.sms]), 0)
+            self.assertEqual(hooks_cli.event_main([]), 2)
+            self.assertEqual(len(self.queued()), 1)
+            self.assertEqual(hooks_cli.worker_main(['-c', 'development', '--settings', settings, '--once']), 0)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
 
 
 if __name__ == '__main__':

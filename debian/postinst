@@ -10,6 +10,8 @@ if [ "$1" = configure ]; then
     if [ ! -e "$dir/htpasswd.users" ]; then
         install -m 640 -o root -g smsd /dev/null "$dir/htpasswd.users"
     fi
+    # webhook queue, written by the smsd eventhandler (runs as smsd)
+    install -d -m 2770 -o smsd -g smsd /var/spool/sms/webhooks
 fi
 
 #DEBHELPER#

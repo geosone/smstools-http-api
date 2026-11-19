@@ -16,6 +16,8 @@ Changes against upstream:
 - site settings in a separate file (`SMSTOOLS_HTTP_API_SETTINGS`), see `contrib/settings.py.example`
 - `DEMO` mode: messages are accepted, logged and stored in the `sent` spool with `Demo: yes`
   instead of being handed to smsd (for setups without modem/SIM yet)
+- webhooks: received (and sent/failed/...) messages are POSTed to configured URLs,
+  with retries and a custom body per hook (e.g. Zabbix `history.push`), see [Webhooks](#webhooks)
 - fixed: listing messages recursed endlessly, message IDs could escape the spool directory
   (`../`), JSON errors keys (`"status: "` -> `"status"`), headers with `:` in the value,
   wrong Content-Type gave 415 instead of 400; `POST/GET /sms/outgoing` answers 201 as documented
@@ -62,6 +64,57 @@ Settings go to `/etc/smstools-http-api/settings.py` (see `contrib/settings.py.ex
 `DEMO`, `HTPASSWD_PATH`, `ADMIN_ACCOUNTS`, `DEFAULTQUEUE`, `USER_WHITELIST`. Users are
 in an htpasswd file (`htpasswd -B`). Basic auth travels in clear text: listen on a
 trusted network only, or behind a TLS reverse proxy.
+
+### Webhooks
+
+smsd runs an *eventhandler* for every message. `smstools-http-api-event` only writes
+the event as a JSON file into `/var/spool/sms/webhooks` (`WEBHOOK_QUEUE`), so the modem
+handler is never blocked; the `smstools-http-api-webhooks` service POSTs the queued events
+to every subscribed webhook and retries failed deliveries (30 s, doubling up to 1 h) until
+`WEBHOOK_MAX_AGE` (24 h), then moves the event to `webhooks/failed`.
+
+1. `/etc/smsd.conf`, global section:
+
+       eventhandler = /usr/bin/smstools-http-api-event
+
+   (an eventhandler you had before goes to `EVENTHANDLER_CHAIN` in `settings.py`; it is
+   run first with the same arguments), then `systemctl restart smstools`.
+   Debian runs smsd as `smsd:dialout`, so the handler usually cannot read `settings.py`
+   (`root:smsd 640`); it then queues every event and the worker drops the ones no hook
+   subscribed to. `EVENTHANDLER_CHAIN` and a non-default `WEBHOOK_QUEUE` need the settings
+   to be readable by the group smsd runs with.
+2. `WEBHOOKS` in `/etc/smstools-http-api/settings.py`, see `contrib/settings.py.example`:
+
+       WEBHOOKS = [
+           {'name': 'example', 'url': 'https://hooks.example.org/sms',
+            'events': ['RECEIVED'], 'headers': {'Authorization': 'Bearer TOKEN'}},
+       ]
+
+   Per hook: `events` (`RECEIVED` by default; also `SENT`, `FAILED`, `REPORT`, `CALL`),
+   `headers`, `auth` (basic auth tuple), `timeout`, `verify=False`, and the callables
+   `filter(event)`, `payload(event)` (request body, default: the event) and
+   `check(status, body)` (success test, default: HTTP 2xx). The example file has a
+   ready-made hook for the Zabbix 7 API (`history.push` into a trapper item).
+3. `systemctl enable --now smstools-http-api-webhooks` (restart it after changing the settings).
+
+The event that is POSTed by default:
+
+    {
+      "event": "RECEIVED",
+      "message_id": "GSM1.3GnJtv",
+      "kind": "incoming",
+      "from": "436761234567",
+      "to": null,
+      "modem": "GSM1",
+      "sms_id": null,
+      "text": "Test 3",
+      "headers": {"From": "436761234567", "Sent": "26-11-19 11:29:14", "Received": "26-11-19 11:29:25", ...},
+      "time": "2026-11-19T10:29:26+00:00"
+    }
+
+`smstools-http-api-webhooks --once` delivers what is due and exits (for testing). In a
+container, run the worker from the same image with `--entrypoint smstools-http-api-webhooks`;
+the eventhandler has to run where smsd runs.
 
 ### Development
 
