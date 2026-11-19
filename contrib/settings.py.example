@@ -48,6 +48,34 @@ HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
 #     'check': lambda status, body: status == 200 and 'error' not in body},
 #]
 
+# Address book for 'route' hooks and mail2sms: a CardDAV address book ('?export'
+# returns all vCards; cached, fetched again after ttl seconds) or a vCard file.
+#CONTACTS = {'url': 'https://cloud.example.org/remote.php/dav/addressbooks/users/smsgw/family/?export',
+#            'auth': ('smsgw', 'APP-PASSWORD'), 'ttl': 900}
+#CONTACTS = {'file': '/etc/smstools-http-api/contacts.vcf'}
+#COUNTRY_CODE = '43'          # for numbers written as 0676...
+
+# Route received SMS by leading @tokens ("@mum @dad dinner at 6") to the contacts'
+# mail addresses; no (known) token -> default_to. Tokens in 'skip' are handled by
+# other hooks, e.g. Zabbix with
+#   'filter': lambda e: 'zabbix' in parse_tokens(e['text'])[0]
+# (from smstools_http_api.webhooks import parse_tokens).
+#WEBHOOKS += [
+#    {'name': 'route', 'type': 'route', 'events': ['RECEIVED'],
+#     'domain': 'sms.example.org', 'default_to': 'me@example.org',
+#     'skip': ['zabbix'], 'mail_domains': ['example.org'],
+#     'smtp_host': 'mail.example.org', 'smtp_port': 25,
+#     'texts': {'subject': 'SMS von {name}', 'footer': 'Antworten auf diese Mail geht als SMS an {name}.',
+#               'unknown': 'Unbekannte Empfaenger: {names}'}},
+#]
+
+# mail2sms (smstools-http-api-mail2sms, Postfix pipe): who may send. Senders with an
+# address of a contact (in these domains, if set) plus MAIL2SMS_SENDERS.
+#MAIL2SMS_SENDER_DOMAINS = ['example.org']
+#MAIL2SMS_SENDERS = []
+#MAIL2SMS_PREFIX = True       # "Mario: text"
+#MAIL2SMS_MAX_PARTS = 3
+
 # Give up on an event after this many seconds (moved to WEBHOOK_QUEUE/failed)
 #WEBHOOK_MAX_AGE = 86400
 

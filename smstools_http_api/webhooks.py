@@ -29,6 +29,16 @@ A hook with 'type': 'email' mails the event instead of POSTing it:
     smtp_ssl    SMTP over TLS; starttls: STARTTLS; smtp_auth: (user, password)
     subject     string or callable(event) (default "SMS from <number>")
     body        string or callable(event) (default: text plus the main headers)
+
+A hook with 'type': 'route' mails a received SMS to the contacts (CONTACTS, see
+contacts.py) named by its leading @tokens ("@mum @rene see you at 6"):
+
+    domain       mail2sms domain; the mail comes from <number>@domain, so replies are SMS
+    default_to   address(es) for SMS without (known) tokens
+    skip         tokens other hooks handle (e.g. ['zabbix'], with a filter on parse_tokens)
+    mail_domains prefer a contact's address in these domains
+    texts        {'subject': 'SMS from {name}', 'footer': ..., 'unknown': ...{names}}
+    plus the SMTP settings of type 'email'.
 """
 
 import base64
@@ -37,6 +47,7 @@ import email.message
 import email.utils
 import json
 import os
+import re
 import smtplib
 import socket
 import ssl
@@ -46,7 +57,8 @@ import time
 import urllib.error
 import urllib.request
 
-from .message import read_message
+from . import contacts
+from .message import normalize_number, read_message
 
 EVENTS = ('RECEIVED', 'SENT', 'FAILED', 'REPORT', 'CALL')
 DEFAULT_QUEUE = '/var/spool/sms/webhooks'
@@ -126,18 +138,95 @@ def default_body(event):
 EVENT_WORDS = {'RECEIVED': 'from', 'SENT': 'sent to', 'FAILED': 'failed to', 'REPORT': 'report for'}
 
 
+def _as_list(value):
+    return list(value) if isinstance(value, (list, tuple)) else ([value] if value else [])
+
+
 def send_mail(hook, event):
     """Mail one event (hook type 'email'); returns (ok, detail)."""
     msg = email.message.EmailMessage()
     msg['From'] = hook.get('from', 'smstools-http-api@%s' % socket.getfqdn())
-    to = hook['to'] if isinstance(hook['to'], (list, tuple)) else [hook['to']]
-    msg['To'] = ', '.join(to)
+    msg['To'] = ', '.join(_as_list(hook['to']))
     subject = hook.get('subject', default_subject)
     msg['Subject'] = subject(event) if callable(subject) else subject
-    msg['Date'] = email.utils.formatdate(localtime=True)
-    msg['Message-ID'] = email.utils.make_msgid(domain=email.utils.parseaddr(msg['From'])[1].rpartition('@')[2] or None)
     body = hook.get('body', default_body)
     msg.set_content(body(event) if callable(body) else body)
+    return smtp_send(hook, msg)
+
+
+def parse_tokens(text):
+    """Split the leading '@name' tokens off an SMS: '@mum @rene hi' -> (['mum', 'rene'], 'hi')."""
+    match = re.match(r'\s*((?:@[\w.+-]+[\s,;:]*)+)', text or '')
+    if not match:
+        return [], (text or '').strip()
+    tokens = [t.lower().rstrip('.') for t in re.findall(r'@([\w.+-]+)', match.group(1))]
+    return tokens, text[match.end():].strip()
+
+
+ROUTE_DEFAULTS = {
+    'subject': 'SMS from {name}',
+    'footer': 'Reply to this mail to answer by SMS.',
+    'unknown': 'Unknown recipients: {names}',
+}
+
+
+def route_mail(hook, event, config):
+    """Hook type 'route': mail a received SMS to the contacts named by its leading @tokens.
+
+    Tokens in 'skip' are left to other hooks (e.g. @zabbix); an SMS without (known)
+    tokens goes to 'default_to'.  The mail comes from <number>@<domain>, so a reply
+    goes back through mail2sms.
+    """
+    tokens, text = parse_tokens(event.get('text'))
+    book = contacts.directory(config, log=log)
+    skip = {s.lower() for s in hook.get('skip', [])}
+    domains = [d.lower() for d in hook.get('mail_domains', [])]
+    to, unknown = [], []
+    for token in tokens:
+        if token in skip:
+            continue
+        cards = [c for c in book.resolve(token) if c['emails']]
+        if not cards:
+            unknown.append(token)
+        for card in cards:
+            preferred = [e for e in card['emails'] if e.rpartition('@')[2].lower() in domains]
+            address = (preferred or card['emails'])[0]
+            if address.lower() not in (a.lower() for a in to):
+                to.append(address)
+    if not to and (unknown or not set(tokens) & skip):
+        to = _as_list(hook['default_to'])
+    if not to:
+        return True, 'left to other hooks (%s)' % ', '.join('@' + t for t in tokens)
+
+    number = normalize_number(event.get('from') or '', config.get('COUNTRY_CODE', '43'))
+    known = book.by_number(number) if number.isdigit() else []
+    name = known[0]['name'] if known else ('+' + number if number.isdigit() else event.get('from') or '?')
+    words = dict(ROUTE_DEFAULTS, **hook.get('texts', {}))
+    msg = email.message.EmailMessage()
+    if number.isdigit():
+        reply = email.utils.formataddr(('%s (SMS)' % name, '%s@%s' % (number, hook['domain'])))
+        msg['From'] = reply
+    else:  # alphanumeric sender, cannot be answered
+        msg['From'] = hook.get('from', 'smstools-http-api@%s' % socket.getfqdn())
+    msg['To'] = ', '.join(to)
+    msg['Subject'] = words['subject'].format(name=name, number=number)
+    lines = [text, '', '--']
+    if unknown:
+        lines.append(words['unknown'].format(names=', '.join('@' + t for t in unknown)))
+    if number.isdigit():
+        lines.append(words['footer'].format(name=name, number=number))
+    lines.append('%s: %s' % (event['message_id'], event['headers'].get('Received') or event['headers'].get('Sent', '')))
+    msg.set_content('\n'.join(lines) + '\n')
+    return smtp_send(hook, msg)
+
+
+def smtp_send(hook, msg):
+    """Send a mail with the SMTP settings of a hook; returns (ok, detail)."""
+    if 'Date' not in msg:
+        msg['Date'] = email.utils.formatdate(localtime=True)
+    if 'Message-ID' not in msg:
+        msg['Message-ID'] = email.utils.make_msgid(
+            domain=email.utils.parseaddr(msg['From'])[1].rpartition('@')[2] or None)
     try:
         smtp_class = smtplib.SMTP_SSL if hook.get('smtp_ssl') else smtplib.SMTP
         with smtp_class(hook.get('smtp_host', 'localhost'), hook.get('smtp_port', 465 if hook.get('smtp_ssl') else 25),
@@ -154,10 +243,16 @@ def send_mail(hook, event):
     return True, 'mailed to %s' % msg['To']
 
 
-def post(hook, event):
-    """Deliver one event to one hook (HTTP POST, or mail for type 'email'); returns (ok, detail)."""
+def post(hook, event, config=None):
+    """Deliver one event to one hook (HTTP POST, mail for type 'email', routed mail for
+    type 'route'); returns (ok, detail)."""
     if hook.get('type') == 'email':
         return send_mail(hook, event)
+    if hook.get('type') == 'route':
+        try:
+            return route_mail(hook, event, config or {})
+        except Exception as err:  # e.g. a broken address book must not kill the worker
+            return False, 'route failed: %s' % err
     body = hook['payload'](event) if callable(hook.get('payload')) else event
     data = json.dumps(body).encode()
     request = urllib.request.Request(hook['url'], data=data, method='POST')
@@ -208,7 +303,7 @@ def deliver_file(config, path, now=None):
             if not wanted:
                 record['delivered'].append(hook['name'])
                 continue
-        ok, detail = post(hook, event)
+        ok, detail = post(hook, event, config)
         if ok:
             record['delivered'].append(hook['name'])
             log('webhook %s: %s %s delivered (%s)' % (hook['name'], event['event'], event['message_id'], detail))

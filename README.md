@@ -18,6 +18,9 @@ Changes against upstream:
   instead of being handed to smsd (for setups without modem/SIM yet)
 - webhooks: received (and sent/failed/...) messages are POSTed to configured URLs or mailed,
   with retries and a custom body per hook (e.g. Zabbix `history.push`), see [Webhooks](#webhooks)
+- address book from CardDAV (e.g. Nextcloud) for SMS routing: `@mum @dad ...` at the
+  start of a received SMS mails it to those contacts, and mails to `mum@sms.example.org`
+  or `436761234567@sms.example.org` are sent as SMS, see [Routing and mail2sms](#routing-and-mail2sms)
 - fixed: listing messages recursed endlessly, message IDs could escape the spool directory
   (`../`), JSON errors keys (`"status: "` -> `"status"`), headers with `:` in the value,
   wrong Content-Type gave 415 instead of 400; `POST/GET /sms/outgoing` answers 201 as documented
@@ -125,6 +128,31 @@ The event that is POSTed by default:
 `smstools-http-api-webhooks --once` delivers what is due and exits (for testing). In a
 container, run the worker from the same image with `--entrypoint smstools-http-api-webhooks`;
 the eventhandler has to run where smsd runs.
+
+### Routing and mail2sms
+
+With `CONTACTS` (a CardDAV address book or a vCard file, see `contrib/settings.py.example`)
+contacts answer to their nicknames, groups (categories), given and full names, mail
+addresses and numbers.
+
+*Received SMS* — a webhook of type `route` mails an SMS to the contacts named by its
+leading tokens, `@mum @rene dinner at 6`; an SMS without (known) tokens goes to
+`default_to`, tokens in `skip` (e.g. `@zabbix`) are left to other hooks. The mail comes
+from `<number>@<domain>`, so answering it sends an SMS back.
+
+*Mail to SMS* — `smstools-http-api-mail2sms SENDER RECIPIENT` reads a mail on stdin and
+sends its text (without quotes and signature, else the subject) to the number or contact
+group in the recipient's local part. Only `MAIL2SMS_SENDERS` and contacts' addresses (in
+`MAIL2SMS_SENDER_DOMAINS`) may send; it exits with sysexits codes so the MTA bounces with
+a reason. Postfix on the smsd host (`sms.example.org` relayed to it):
+
+    # main.cf
+    relay_domains = sms.example.org
+    transport_maps = inline:{ sms.example.org=smstools-http-api-mail2sms: }
+    smstools-http-api-mail2sms_destination_recipient_limit = 1
+    # master.cf
+    smstools-http-api-mail2sms unix - n n - 4 pipe
+      flags=Rq user=smsd argv=/usr/bin/smstools-http-api-mail2sms ${sender} ${recipient}
 
 ### Development
 

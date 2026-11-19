@@ -275,5 +275,168 @@ class WebhookTestCase(unittest.TestCase):
             os.environ.update(old)
 
 
+VCARDS = '''BEGIN:VCARD
+VERSION:3.0
+UID:a
+FN:Lydia Fetka
+N:Fetka;Lydia;;;
+NICKNAME:mum,mama
+CATEGORIES:eltern,familie
+EMAIL;TYPE=HOME:lydia@example.org
+EMAIL;TYPE=OTHER:lydia@gmail.example
+TEL;TYPE=CELL:+43 664 1111111
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+UID:b
+FN:Josef Fetka
+N:Fetka;Josef;;;
+NICKNAME:dad,papa
+CATEGORIES:eltern,familie
+EMAIL;TYPE=HOME:josef@example.org
+TEL;TYPE=CELL:0681 2222222
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+UID:c
+FN:Mario Fetka
+N:Fetka;Mario;;;
+NICKNAME:mario
+CATEGORIES:buben,familie
+EMAIL:mario@example.org
+TEL;TYPE=CELL:+436763333333
+END:VCARD
+'''
+
+
+class ContactsTestCase(unittest.TestCase):
+    def setUp(self):
+        from smstools_http_api import contacts
+        self.book = contacts.Directory(contacts.parse_vcards(VCARDS))
+
+    def test_resolve(self):
+        self.assertEqual([c['given'] for c in self.book.resolve('MUM')], ['Lydia'])
+        self.assertEqual([c['given'] for c in self.book.resolve('eltern')], ['Lydia', 'Josef'])
+        self.assertEqual([c['given'] for c in self.book.resolve('lydia.fetka')], ['Lydia'])
+        self.assertEqual(self.book.resolve('nobody'), [])
+        self.assertEqual(self.book.numbers(self.book.resolve('dad')[0]), ['436812222222'])
+        self.assertEqual(self.book.by_number('+436641111111')[0]['given'], 'Lydia')
+        self.assertEqual(self.book.by_email('Lydia@GMAIL.example')[0]['given'], 'Lydia')
+
+    def test_folded_and_escaped(self):
+        from smstools_http_api import contacts
+        cards = contacts.parse_vcards('BEGIN:VCARD\r\nFN:A\\, B\r\nNICKNAME:x\\,y,z\r\n'
+                                      'item1.EMAIL;PREF=1:a@ex\r\n ample.org\r\nEND:VCARD\r\n')
+        self.assertEqual(cards[0]['name'], 'A, B')
+        self.assertEqual(cards[0]['nicknames'], ['x,y', 'z'])
+        self.assertEqual(cards[0]['emails'], ['a@example.org'])
+
+    def test_tokens(self):
+        self.assertEqual(webhooks.parse_tokens('@Mum, @rene: Hallo @x'), (['mum', 'rene'], 'Hallo @x'))
+        self.assertEqual(webhooks.parse_tokens('Hallo'), ([], 'Hallo'))
+
+
+class RouteTestCase(unittest.TestCase):
+    def setUp(self):
+        shutil.rmtree(BASE, ignore_errors=True)
+        os.makedirs(os.path.join(BASE, 'incoming'))
+        with open(os.path.join(BASE, 'contacts.vcf'), 'w') as fp:
+            fp.write(VCARDS)
+        self.config = dict(create_app('test').config)
+        self.config['CONTACTS'] = {'file': os.path.join(BASE, 'contacts.vcf')}
+        self.config['WEBHOOKS'] = [{'name': 'route', 'type': 'route', 'domain': 'sms.example.org',
+                                    'default_to': 'mario@example.org', 'skip': ['zabbix'],
+                                    'mail_domains': ['example.org']}]
+
+    def tearDown(self):
+        shutil.rmtree(BASE, ignore_errors=True)
+
+    def deliver(self, text, sender='436641111111'):
+        path = os.path.join(BASE, 'incoming', 'GSM1.x')
+        with open(path, 'wb') as fp:
+            fp.write(('From: %s\nReceived: 26-11-19 12:00:00\n\n%s' % (sender, text)).encode())
+        with mock.patch('smtplib.SMTP') as smtp:
+            smtp.return_value.__enter__.return_value.send_message.return_value = {}
+            webhooks.enqueue(self.config, 'RECEIVED', path)
+            self.assertEqual(webhooks.deliver_pending(self.config), {'done': 1})
+        calls = smtp.return_value.__enter__.return_value.send_message.call_args_list
+        return [c[0][0] for c in calls]
+
+    def test_tokens_route_to_contacts(self):
+        msg, = self.deliver('@eltern @mario Essen um 6')
+        self.assertEqual(msg['To'], 'lydia@example.org, josef@example.org, mario@example.org')
+        self.assertEqual(msg['From'], '"Lydia Fetka (SMS)" <436641111111@sms.example.org>')
+        self.assertEqual(msg['Subject'], 'SMS from Lydia Fetka')
+        self.assertTrue(msg.get_content().startswith('Essen um 6\n'))
+
+    def test_no_token_goes_to_default(self):
+        msg, = self.deliver('Hallo', sender='4369912345')
+        self.assertEqual(msg['To'], 'mario@example.org')
+        self.assertEqual(msg['Subject'], 'SMS from +4369912345')
+
+    def test_unknown_token_goes_to_default(self):
+        msg, = self.deliver('@nobody hi')
+        self.assertEqual(msg['To'], 'mario@example.org')
+        self.assertIn('@nobody', msg.get_content())
+
+    def test_skipped_token_left_to_other_hook(self):
+        self.assertEqual(self.deliver('@zabbix ack 42'), [])
+
+
+class Mail2smsTestCase(unittest.TestCase):
+    def setUp(self):
+        shutil.rmtree(BASE, ignore_errors=True)
+        for kind in ('outgoing', 'sent'):
+            os.makedirs(os.path.join(BASE, kind))
+        with open(os.path.join(BASE, 'contacts.vcf'), 'w') as fp:
+            fp.write(VCARDS)
+        self.settings = os.path.join(BASE, 'settings.py')
+        with open(self.settings, 'w') as fp:
+            fp.write('CONTACTS = {"file": %r}\nMAIL2SMS_SENDER_DOMAINS = ["example.org"]\n'
+                     'MAIL2SMS_SENDERS = ["robot@other.example"]\n' % os.path.join(BASE, 'contacts.vcf'))
+
+    def tearDown(self):
+        shutil.rmtree(BASE, ignore_errors=True)
+
+    def run_mail(self, sender, rcpt, mail):
+        from smstools_http_api import mail2sms
+        stdin = mock.Mock()
+        stdin.buffer = __import__('io').BytesIO(mail.encode())
+        with mock.patch('sys.stdin', stdin), mock.patch('sys.stdout', __import__('io').StringIO()):
+            return mail2sms.main(['-c', 'test', '--settings', self.settings, sender, rcpt])
+
+    def spooled(self):
+        from smstools_http_api.message import read_message
+        out = os.path.join(BASE, 'outgoing')
+        return sorted((m['To'], m['text']) for m in (read_message(os.path.join(out, n)) for n in os.listdir(out)))
+
+    def test_reply_to_number(self):
+        mail = ('From: mario@example.org\nSubject: Re: SMS\nContent-Type: text/plain; charset=utf-8\n\n'
+                'Bin unterwegs\n\nAm 19.11.2026 um 12:00 schrieb Lydia:\n> Essen um 6\n')
+        self.assertEqual(self.run_mail('mario@example.org', '436641111111@sms.example.org', mail), 0)
+        self.assertEqual(self.spooled(), [('436641111111', 'Mario: Bin unterwegs')])
+
+    def test_group_skips_sender(self):
+        mail = 'Subject: Kommt ihr?\n\n'
+        self.assertEqual(self.run_mail('lydia@example.org', 'familie@sms.example.org', mail), 0)
+        self.assertEqual(self.spooled(), [('436763333333', 'Lydia: Kommt ihr?'),
+                                          ('436812222222', 'Lydia: Kommt ihr?')])
+
+    def test_refused_and_unknown(self):
+        mail = 'Subject: x\n\nhi\n'
+        self.assertEqual(self.run_mail('lydia@gmail.example', 'mum@sms.example.org', mail), 77)
+        self.assertEqual(self.run_mail('evil@example.org', 'mum@sms.example.org', mail), 77)
+        self.assertEqual(self.run_mail('mario@example.org', 'nobody@sms.example.org', mail), 67)
+        self.assertEqual(self.run_mail('robot@other.example', 'mum@sms.example.org', mail), 0)
+        self.assertEqual(self.spooled(), [('436641111111', 'hi')])
+
+    def test_long_unicode_text_is_cut(self):
+        mail = 'Content-Type: text/plain; charset=utf-8\n\n' + 'ä' * 500 + '\n-- \nSignatur\n'
+        self.assertEqual(self.run_mail('mario@example.org', 'dad@sms.example.org', mail), 0)
+        (_, text), = self.spooled()
+        self.assertEqual(len(text), 3 * 67)
+        self.assertTrue(text.endswith('…'))
+
+
 if __name__ == '__main__':
     unittest.main()

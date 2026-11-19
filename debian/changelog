@@ -1,3 +1,16 @@
+smstools-http-api (2.3.0) unstable; urgency=medium
+
+  * Address book (CONTACTS): vCards from a CardDAV address book (cached)
+    or a file; contacts answer to nicknames, groups (categories), names,
+    e-mail addresses and numbers.
+  * Webhooks of type 'route': a received SMS goes by mail to the contacts
+    named by its leading @tokens (default recipient otherwise); the mail
+    comes from <number>@<sms domain>, so a reply becomes an SMS.
+  * smstools-http-api-mail2sms: MTA pipe that sends a mail to
+    <name or number>@<sms domain> as SMS (allowed senders only).
+
+ -- Mario Fetka <mario.fetka@gmail.com>  Thu, 19 Nov 2026 15:00:00 +0100
+
 smstools-http-api (2.2.0) unstable; urgency=medium
 
   * Webhooks of type 'email': mail events (e.g. received SMS) over SMTP,

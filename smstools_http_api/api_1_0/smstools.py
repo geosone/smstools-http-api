@@ -2,12 +2,10 @@
 
 import os
 import re
-import uuid
-from email.message import Message
 
 from flask import current_app, jsonify, request
 
-from ..message import read_message
+from ..message import encode_text, read_message, write_outgoing
 from .authentication import username
 from .errors import forbidden, not_found
 
@@ -80,21 +78,8 @@ def get_some_sms(kind, message_id):
         return jsonify(result)
     return forbidden(None)
 
-def detect_coding(text):
-    text_len=len(text)
-    try:
-        parts_count = text_len // 153 + (text_len % 153 > 0)
-        text = text.encode('ascii')
-        coding = 'ISO'
-    except UnicodeEncodeError:
-        parts_count = text_len // 67 + (text_len % 67 > 0)
-        text = text.encode('utf-16-be')
-        coding = 'UCS2'
-
-    return text, coding, parts_count
-
 def send_sms(data):
-    text, coding, parts_count = detect_coding(data['text'])
+    _, _, parts_count = encode_text(data['text'])
     demo = bool(current_app.config.get('DEMO'))
 
     result = {
@@ -104,14 +89,11 @@ def send_sms(data):
         'mobiles': {}
     }
 
-    for mobile in data['mobiles']:
-        # generate message_id
-        message_id = str(uuid.uuid4())
+    if data.get('queue'):
+        result['queue'] = data['queue']
 
+    for mobile in data['mobiles']:
         result['mobiles'][mobile] = {}
-        result['mobiles'][mobile]['message_id'] = message_id
-        result['mobiles'][mobile]['dlr_status'] = os.path.join(os.path.dirname(request.url),
-                                                  os.path.basename(current_app.config['SENT']), message_id)
 
         if not validate_mobile(mobile):
             current_app.logger.info('Message from [%s] to [%s] have invalid mobile number' % (username(), mobile))
@@ -122,24 +104,11 @@ def send_sms(data):
             # DEMO: nothing goes to smsd; the message lands in the "sent" spool
             # (readable through dlr_status) marked "Demo: yes".
             spool = current_app.config['SENT' if demo else 'OUTGOING']
-            lock_file = os.path.join(spool, message_id + '.LOCK')
-            m = Message()
-            m.add_header('From', username())
-            m.add_header('To', mobile)
-            m.add_header('Alphabet', coding)
-            if demo:
-                m.add_header('Demo', 'yes')
-            if data.get('queue'):
-                result.update({'queue' : data['queue']})
-                m.add_header('Queue', result.get('queue'))
-            m.set_payload(text)
-
-            with open(lock_file, 'wb') as fp:
-                fp.write(m.as_bytes())
-
-            msg_file = lock_file.split('.LOCK')[0]
-            os.rename(lock_file, msg_file)
-            os.chmod(msg_file, 0o660)
+            msg_file = write_outgoing(spool, username(), mobile, data['text'], data.get('queue'), demo)
+            message_id = os.path.basename(msg_file)
+            result['mobiles'][mobile]['message_id'] = message_id
+            result['mobiles'][mobile]['dlr_status'] = os.path.join(os.path.dirname(request.url),
+                                                      os.path.basename(current_app.config['SENT']), message_id)
             if demo:
                 current_app.logger.info('DEMO: message from [%s] to [%s] NOT sent, stored as [%s]: %s'
                                         % (username(), mobile, msg_file, data['text']))
