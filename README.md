@@ -16,7 +16,7 @@ Changes against upstream:
 - site settings in a separate file (`SMSTOOLS_HTTP_API_SETTINGS`), see `contrib/settings.py.example`
 - `DEMO` mode: messages are accepted, logged and stored in the `sent` spool with `Demo: yes`
   instead of being handed to smsd (for setups without modem/SIM yet)
-- webhooks: received (and sent/failed/...) messages are POSTed to configured URLs,
+- webhooks: received (and sent/failed/...) messages are POSTed to configured URLs or mailed,
   with retries and a custom body per hook (e.g. Zabbix `history.push`), see [Webhooks](#webhooks)
 - fixed: listing messages recursed endlessly, message IDs could escape the spool directory
   (`../`), JSON errors keys (`"status: "` -> `"status"`), headers with `:` in the value,
@@ -95,6 +95,16 @@ to every subscribed webhook and retries failed deliveries (30 s, doubling up to 
    `filter(event)`, `payload(event)` (request body, default: the event) and
    `check(status, body)` (success test, default: HTTP 2xx). The example file has a
    ready-made hook for the Zabbix 7 API (`history.push` into a trapper item).
+
+   A hook with `'type': 'email'` mails the event instead (text plus the main headers),
+   with the same queue and retries:
+
+       {'name': 'mail', 'type': 'email', 'events': ['RECEIVED'],
+        'to': 'me@example.org', 'from': 'sms@example.org',
+        'smtp_host': 'mail.example.org', 'smtp_port': 25}
+
+   Optional: `starttls`, `smtp_ssl`, `smtp_auth` (user, password), `subject` and `body`
+   (strings or callables of the event).
 3. `systemctl enable --now smstools-http-api-webhooks` (restart it after changing the settings).
 
 The event that is POSTed by default:

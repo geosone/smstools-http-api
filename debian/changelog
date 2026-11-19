@@ -1,3 +1,10 @@
+smstools-http-api (2.2.0) unstable; urgency=medium
+
+  * Webhooks of type 'email': mail events (e.g. received SMS) over SMTP,
+    with the same queue and retries as the HTTP webhooks.
+
+ -- Mario Fetka <mario.fetka@gmail.com>  Thu, 19 Nov 2026 13:00:00 +0100
+
 smstools-http-api (2.1.0) unstable; urgency=medium
 
   * Webhooks for smsd events: smstools-http-api-event (smsd eventhandler)

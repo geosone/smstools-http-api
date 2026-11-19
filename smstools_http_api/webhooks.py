@@ -20,12 +20,25 @@ A webhook (an entry of WEBHOOKS in the settings file) is a dict:
     filter    callable(event) -> bool: deliver only matching events
     payload   callable(event) -> JSON-serialisable body (default: the event)
     check     callable(status, body) -> bool: success test (default: 2xx)
+
+A hook with 'type': 'email' mails the event instead of POSTing it:
+
+    to          address or list of addresses
+    from        sender (default smstools-http-api@<fqdn>)
+    smtp_host   (default localhost), smtp_port (25, 465 with smtp_ssl)
+    smtp_ssl    SMTP over TLS; starttls: STARTTLS; smtp_auth: (user, password)
+    subject     string or callable(event) (default "SMS from <number>")
+    body        string or callable(event) (default: text plus the main headers)
 """
 
 import base64
 import datetime
+import email.message
+import email.utils
 import json
 import os
+import smtplib
+import socket
 import ssl
 import sys
 import tempfile
@@ -96,8 +109,55 @@ def enqueue(config, event, path, sms_id=None, unfiltered=False):
     return final
 
 
+def default_subject(event):
+    who = event.get('from') if event['event'] == 'RECEIVED' else event.get('to')
+    return 'SMS %s %s' % (EVENT_WORDS.get(event['event'], event['event']), who or '')
+
+
+def default_body(event):
+    lines = [event.get('text') or '', '', '--']
+    for key in ('From', 'To', 'Sent', 'Received', 'Modem', 'Fail_reason'):
+        if event['headers'].get(key):
+            lines.append('%s: %s' % (key, event['headers'][key]))
+    lines.append('Event: %s %s' % (event['event'], event['message_id']))
+    return '\n'.join(lines) + '\n'
+
+
+EVENT_WORDS = {'RECEIVED': 'from', 'SENT': 'sent to', 'FAILED': 'failed to', 'REPORT': 'report for'}
+
+
+def send_mail(hook, event):
+    """Mail one event (hook type 'email'); returns (ok, detail)."""
+    msg = email.message.EmailMessage()
+    msg['From'] = hook.get('from', 'smstools-http-api@%s' % socket.getfqdn())
+    to = hook['to'] if isinstance(hook['to'], (list, tuple)) else [hook['to']]
+    msg['To'] = ', '.join(to)
+    subject = hook.get('subject', default_subject)
+    msg['Subject'] = subject(event) if callable(subject) else subject
+    msg['Date'] = email.utils.formatdate(localtime=True)
+    msg['Message-ID'] = email.utils.make_msgid(domain=email.utils.parseaddr(msg['From'])[1].rpartition('@')[2] or None)
+    body = hook.get('body', default_body)
+    msg.set_content(body(event) if callable(body) else body)
+    try:
+        smtp_class = smtplib.SMTP_SSL if hook.get('smtp_ssl') else smtplib.SMTP
+        with smtp_class(hook.get('smtp_host', 'localhost'), hook.get('smtp_port', 465 if hook.get('smtp_ssl') else 25),
+                        timeout=hook.get('timeout', 30)) as smtp:
+            if hook.get('starttls'):
+                smtp.starttls(context=ssl.create_default_context())
+            if hook.get('smtp_auth'):
+                smtp.login(*hook['smtp_auth'])
+            refused = smtp.send_message(msg)
+    except (smtplib.SMTPException, OSError) as err:
+        return False, 'SMTP %s' % err
+    if refused:
+        return False, 'SMTP refused %s' % ', '.join(refused)
+    return True, 'mailed to %s' % msg['To']
+
+
 def post(hook, event):
-    """POST one event to one webhook; returns (ok, detail)."""
+    """Deliver one event to one hook (HTTP POST, or mail for type 'email'); returns (ok, detail)."""
+    if hook.get('type') == 'email':
+        return send_mail(hook, event)
     body = hook['payload'](event) if callable(hook.get('payload')) else event
     data = json.dumps(body).encode()
     request = urllib.request.Request(hook['url'], data=data, method='POST')

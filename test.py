@@ -212,6 +212,27 @@ class WebhookTestCase(unittest.TestCase):
         self.assertEqual(len(Recorder.requests), 1)
         self.assertEqual(Recorder.requests[0][2], {'method': 'history.push', 'params': [{'value': 'Test 3'}]})
 
+    def test_email_hook(self):
+        self.config['WEBHOOKS'] = [{'name': 'mail', 'type': 'email', 'to': 'me@example.org',
+                                    'from': 'SMS <sms@example.org>', 'smtp_host': 'mx.example.org', 'smtp_port': 26}]
+        with mock.patch('smtplib.SMTP') as smtp:
+            smtp.return_value.__enter__.return_value.send_message.return_value = {}
+            webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+            self.assertEqual(webhooks.deliver_pending(self.config), {'done': 1})
+        smtp.assert_called_once_with('mx.example.org', 26, timeout=30)
+        msg = smtp.return_value.__enter__.return_value.send_message.call_args[0][0]
+        self.assertEqual(msg['To'], 'me@example.org')
+        self.assertEqual(msg['Subject'], 'SMS from 436761234567')
+        self.assertIn('@example.org>', msg['Message-ID'])
+        self.assertTrue(msg.get_content().startswith('Test 3\n'))
+        self.assertIn('Sent: 26-11-19 11:29:14', msg.get_content())
+
+    def test_email_hook_retries(self):
+        self.config['WEBHOOKS'] = [{'name': 'mail', 'type': 'email', 'to': ['me@example.org']}]
+        with mock.patch('smtplib.SMTP', side_effect=ConnectionRefusedError(111, 'refused')):
+            webhooks.enqueue(self.config, 'RECEIVED', self.sms)
+            self.assertEqual(webhooks.deliver_pending(self.config), {'retry': 1})
+
     def test_eventhandler_unreadable_settings(self):
         # Debian runs smsd as smsd:dialout, the settings file is root:smsd 640
         real = hooks_cli.load_config

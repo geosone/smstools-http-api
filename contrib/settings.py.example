@@ -29,6 +29,12 @@ HTPASSWD_PATH = "/etc/smstools-http-api/htpasswd.users"
 #    {'name': 'example', 'url': 'https://hooks.example.org/sms',
 #     'events': ['RECEIVED'], 'headers': {'Authorization': 'Bearer TOKEN'}},
 #
+#    # Mail received SMS (type 'email': SMTP instead of HTTP; optional starttls,
+#    # smtp_ssl, smtp_auth=(user, password), subject, body)
+#    {'name': 'mail', 'type': 'email', 'events': ['RECEIVED'],
+#     'to': 'me@example.org', 'from': 'sms@example.org',
+#     'smtp_host': 'mail.example.org', 'smtp_port': 25},
+#
 #    # Zabbix >= 7.0: push received SMS into a trapper item (key sms.received,
 #    # type text) of host "gotify" via the API (token of a user with write
 #    # access to that host). history.push answers HTTP 200 also on errors,
